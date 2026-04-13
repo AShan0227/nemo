@@ -13,6 +13,10 @@ class LLMConfig(BaseModel):
     api_key: str = ""
     temperature: float = 0.3
     max_tokens: int = 4096
+    request_timeout_s: float = 45.0
+    retry_count: int = 2
+    retry_backoff_s: float = 1.0
+    enable_stream: bool = False
 
 
 class DeviceConfig(BaseModel):

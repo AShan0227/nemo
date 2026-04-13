@@ -101,6 +101,12 @@ audit_log_path: "./logs/safety_audit.log"
 Then set:
 ```python
 AgentConfig(
+    llm=LLMConfig(
+        request_timeout_s=45,
+        retry_count=2,
+        retry_backoff_s=1.0,
+        enable_stream=False,
+    ),
     safety_enabled=True,
     safety_rules_path="configs/safety_rules.example.yaml",
     step_retry_count=1,
