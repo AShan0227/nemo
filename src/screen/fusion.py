@@ -11,7 +11,21 @@ Destructive interference = sources disagree = low confidence, needs more evidenc
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.screen.ocr import OCRTextBlock
+    from src.screen.parser import UIElement
+
+
+def _normalize_label(label: str) -> str:
+    return re.sub(r"\s+", " ", label).strip().lower()
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
 
 
 @dataclass
@@ -64,3 +78,185 @@ def fuse_multiple(*masses: EvidenceMass) -> tuple[EvidenceMass, float]:
         total_conflict = max(total_conflict, conflict)
 
     return result, total_conflict
+
+
+@dataclass(frozen=True)
+class SignalCandidate:
+    """Candidate hypothesis extracted from one modality."""
+
+    label: str
+    confidence: float
+    source: str
+    bounds: tuple[int, int, int, int] | None = None
+
+    def normalized_label(self) -> str:
+        return _normalize_label(self.label)
+
+
+@dataclass
+class FusionResult:
+    """Final multi-source fusion result."""
+
+    beliefs: dict[str, float]
+    ranked: list[tuple[str, float]]
+    conflict: float
+    source_masses: dict[str, EvidenceMass]
+
+    @property
+    def best_label(self) -> str:
+        return self.ranked[0][0] if self.ranked else "unknown"
+
+
+def candidates_from_ui(
+    elements: list[UIElement],
+    *,
+    interactive_only: bool = True,
+) -> list[SignalCandidate]:
+    """Generate text hypotheses from UI hierarchy."""
+    candidates: list[SignalCandidate] = []
+    for element in elements:
+        if interactive_only and not (element.clickable or element.scrollable or element.editable):
+            continue
+
+        if element.text:
+            label = element.text
+            base_conf = 0.88
+        elif element.content_desc:
+            label = element.content_desc
+            base_conf = 0.82
+        elif element.resource_id:
+            label = element.resource_id.split("/")[-1]
+            base_conf = 0.72
+        elif element.class_name:
+            label = element.class_name.split(".")[-1]
+            base_conf = 0.45
+        else:
+            continue
+
+        boost = 0.04 if (element.clickable or element.editable) else 0.0
+        penalty = 0.08 if element.scrollable else 0.0
+        confidence = _clamp(base_conf + boost - penalty, 0.15, 0.99)
+        candidates.append(
+            SignalCandidate(
+                label=label,
+                confidence=confidence,
+                source="ui",
+                bounds=element.bounds,
+            )
+        )
+    return candidates
+
+
+def candidates_from_ocr(
+    blocks: list[OCRTextBlock],
+    *,
+    min_confidence: float = 0.4,
+) -> list[SignalCandidate]:
+    """Generate hypotheses from OCR text blocks."""
+    candidates: list[SignalCandidate] = []
+    for block in blocks:
+        if block.confidence < min_confidence:
+            continue
+        candidates.append(
+            SignalCandidate(
+                label=block.text,
+                confidence=_clamp(block.confidence, 0.0, 1.0),
+                source="ocr",
+                bounds=block.bounds,
+            )
+        )
+    return candidates
+
+
+def candidates_from_visual(
+    visual_labels: dict[str, float] | list[tuple[str, float]],
+) -> list[SignalCandidate]:
+    """Generate hypotheses from visual model tags/logits."""
+    items = visual_labels.items() if isinstance(visual_labels, dict) else visual_labels
+    candidates: list[SignalCandidate] = []
+    for label, score in items:
+        normalized_score = _clamp(float(score), 0.0, 1.0)
+        if normalized_score <= 0:
+            continue
+        candidates.append(
+            SignalCandidate(
+                label=label,
+                confidence=normalized_score,
+                source="visual",
+            )
+        )
+    return candidates
+
+
+def candidates_to_mass(
+    candidates: list[SignalCandidate],
+    *,
+    min_unknown: float = 0.1,
+) -> EvidenceMass:
+    """Convert candidates into an evidence mass."""
+    if not candidates:
+        return EvidenceMass({"unknown": 1.0})
+
+    beliefs: dict[str, float] = {}
+    max_conf = 0.0
+    for candidate in candidates:
+        label = candidate.normalized_label()
+        if not label:
+            continue
+        score = _clamp(candidate.confidence, 0.0, 1.0)
+        beliefs[label] = max(beliefs.get(label, 0.0), score)
+        max_conf = max(max_conf, score)
+
+    if not beliefs:
+        return EvidenceMass({"unknown": 1.0})
+
+    beliefs["unknown"] = max(min_unknown, 1.0 - max_conf)
+    return EvidenceMass(beliefs)
+
+
+def fuse_screen_sources(
+    *,
+    ui_candidates: list[SignalCandidate] | None = None,
+    ocr_candidates: list[SignalCandidate] | None = None,
+    visual_candidates: list[SignalCandidate] | None = None,
+    top_k: int = 5,
+) -> FusionResult:
+    """Fuse UI/OCR/Visual candidates into final ranked hypotheses."""
+    source_candidates = {
+        "ui": ui_candidates or [],
+        "ocr": ocr_candidates or [],
+        "visual": visual_candidates or [],
+    }
+
+    source_masses: dict[str, EvidenceMass] = {}
+    masses: list[EvidenceMass] = []
+    for source, candidates in source_candidates.items():
+        if not candidates:
+            continue
+        mass = candidates_to_mass(candidates)
+        source_masses[source] = mass
+        masses.append(mass)
+
+    if not masses:
+        empty = {"unknown": 1.0}
+        return FusionResult(
+            beliefs=empty,
+            ranked=[("unknown", 1.0)],
+            conflict=0.0,
+            source_masses={},
+        )
+
+    combined, conflict = fuse_multiple(*masses)
+    ranked = sorted(
+        combined.beliefs.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    if top_k > 0:
+        ranked = ranked[:top_k]
+    return FusionResult(
+        beliefs=combined.beliefs,
+        ranked=ranked,
+        conflict=conflict,
+        source_masses=source_masses,
+    )

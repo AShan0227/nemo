@@ -1,7 +1,6 @@
 """Global configuration for Phone Agent."""
 
 import os
-from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -15,6 +14,10 @@ class LLMConfig(BaseModel):
     api_key: str = ""
     temperature: float = 0.3
     max_tokens: int = 4096
+    request_timeout_s: float = 45.0
+    retry_count: int = 2
+    retry_backoff_s: float = 1.0
+    enable_stream: bool = False
 
     @field_validator("api_key", mode="before")
     @classmethod
@@ -25,12 +28,12 @@ class LLMConfig(BaseModel):
 class DeviceConfig(BaseModel):
     """Android device connection configuration."""
 
-    serial: Optional[str] = None  # auto-detect if None
+    serial: Optional[str] = None
     adb_host: str = "127.0.0.1"
     adb_port: int = 5037
     screenshot_dir: str = "./screenshots"
-    screen_width: Optional[int] = None   # override auto-detect
-    screen_height: Optional[int] = None  # override auto-detect
+    screen_width: Optional[int] = None
+    screen_height: Optional[int] = None
 
 
 class AgentConfig(BaseModel):
@@ -40,13 +43,21 @@ class AgentConfig(BaseModel):
     device: DeviceConfig = Field(default_factory=DeviceConfig)
     max_steps: int = 30
     action_delay_ms: int = 500
+    step_retry_count: int = 1
+    verify_enabled: bool = True
+    verify_diff_threshold: float = 0.01
     entropy_threshold_low: float = 0.3
     entropy_threshold_high: float = 0.7
     safety_enabled: bool = True
+    safety_rules_path: Optional[str] = None
+    safety_audit_log_path: Optional[str] = "./logs/safety_audit.log"
     fusion_enabled: bool = True
     router_enabled: bool = True
     planner_enabled: bool = True
     planner_confidence_threshold: float = 0.7
+    ocr_enabled: bool = False
+    ocr_min_confidence: float = 0.45
+    fusion_top_k: int = 5
 
     @classmethod
     def from_yaml(cls, path: str) -> "AgentConfig":

@@ -79,7 +79,7 @@ async def test_simple_tap_task():
 @pytest.mark.asyncio
 async def test_type_text_task():
     """Verify type_text taps element then types text."""
-    agent = _make_agent()
+    agent = _make_agent(safety=False)  # chat screen triggers message_send_guard
     _mock_adb(agent, [WECHAT_CHAT_XML, WECHAT_CHAT_XML, WECHAT_CHAT_XML])
     _mock_llm(agent, [
         make_llm_response("type_text", {"index": 0, "text": "hello"}, "Type message"),
