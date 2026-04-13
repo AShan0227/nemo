@@ -93,6 +93,9 @@ Then set:
 AgentConfig(
     safety_enabled=True,
     safety_rules_path="configs/safety_rules.example.yaml",
+    ocr_enabled=True,
+    ocr_min_confidence=0.45,
+    fusion_top_k=5,
 )
 ```
 

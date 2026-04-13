@@ -36,3 +36,6 @@ class AgentConfig(BaseModel):
     safety_enabled: bool = True
     safety_rules_path: str | None = None
     safety_audit_log_path: str | None = "./logs/safety_audit.log"
+    ocr_enabled: bool = False
+    ocr_min_confidence: float = 0.45
+    fusion_top_k: int = 5

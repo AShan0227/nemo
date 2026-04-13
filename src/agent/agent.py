@@ -30,6 +30,8 @@ from src.llm.client import LLMClient
 from src.llm.prompts import SYSTEM_PROMPT
 from src.llm.router import EntropyRouter
 from src.safety.invariants import SafetyLayer, Verdict
+from src.screen.fusion import candidates_from_ocr, candidates_from_ui, fuse_screen_sources
+from src.screen.ocr import OCRExtractor
 from src.screen.parser import ScreenParserCache, ScreenState
 
 
@@ -81,6 +83,10 @@ class PhoneAgent:
             self.safety = None
         self.graph = ScreenGraph()
         self.screen_parser = ScreenParserCache()
+        self.ocr = OCRExtractor(
+            enabled=config.ocr_enabled,
+            min_confidence=config.ocr_min_confidence,
+        )
         self.action_recorder = ActionRecorder()
         self.action_timing = ActionTimingTracker()
         self._step_count = 0
@@ -106,7 +112,7 @@ class PhoneAgent:
             screen = await self._observe()
 
             # 2. Think
-            screen_context = screen.to_prompt_str()
+            screen_context = await self._build_screen_context(screen)
             action_json = await self.llm.decide_action(SYSTEM_PROMPT, screen_context, task)
 
             # 3. Parse LLM response
@@ -229,6 +235,40 @@ class PhoneAgent:
         if dedup_hit:
             logger.debug("Screen hash unchanged, reusing last parsed state")
         return state
+
+    async def _build_screen_context(self, screen: ScreenState) -> str:
+        """Build LLM-visible screen context with optional OCR/fusion hints."""
+        context = screen.to_prompt_str()
+        if not self.config.ocr_enabled:
+            return context
+
+        try:
+            screenshot = await self.adb.screenshot()
+            ocr_blocks = await asyncio.to_thread(self.ocr.extract, screenshot)
+        except Exception as exc:
+            logger.warning(f"Failed to run OCR during observe: {exc}")
+            return context
+
+        if not ocr_blocks:
+            return context
+
+        fusion = fuse_screen_sources(
+            ui_candidates=candidates_from_ui(screen.interactive_elements),
+            ocr_candidates=candidates_from_ocr(
+                ocr_blocks,
+                min_confidence=self.config.ocr_min_confidence,
+            ),
+            top_k=self.config.fusion_top_k,
+        )
+
+        lines = [context, "", f"OCR lines ({len(ocr_blocks)}):"]
+        for block in ocr_blocks[:8]:
+            lines.append(f'  - "{block.text}" ({block.confidence:.2f})')
+
+        lines.append(f"Fused hypotheses (conflict={fusion.conflict:.2f}):")
+        for label, score in fusion.ranked[: self.config.fusion_top_k]:
+            lines.append(f"  - {label}: {score:.2f}")
+        return "\n".join(lines)
 
     def _parse_decision(self, raw: str) -> dict[str, Any]:
         """Extract JSON from LLM response."""
