@@ -1,0 +1,40 @@
+[project]
+name = "phone-agent"
+version = "0.1.0"
+description = "AI Phone Assistant — LLM-driven mobile agent with screen understanding and autonomous task execution"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.30",
+    "adbutils>=2.0",
+    "Pillow>=10.0",
+    "numpy>=1.26",
+    "pydantic>=2.5",
+    "loguru>=0.7",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+ocr = ["paddleocr>=2.7", "paddlepaddle>=2.6"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
