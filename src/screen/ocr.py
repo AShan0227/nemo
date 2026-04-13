@@ -120,7 +120,13 @@ def blocks_to_label_scores(
 
 
 class OCRExtractor:
-    """Lazy OCR adapter that works when PaddleOCR is available."""
+    """Lazy OCR adapter that works when PaddleOCR is available.
+
+    Chinese text optimization:
+    - use_angle_cls=True for rotated text on mobile screens
+    - det_db_thresh tuned for small mobile UI text
+    - rec_batch_num configurable for throughput
+    """
 
     def __init__(
         self,
@@ -129,11 +135,15 @@ class OCRExtractor:
         use_angle_cls: bool = True,
         min_confidence: float = 0.3,
         enabled: bool = True,
+        det_db_thresh: float = 0.3,
+        rec_batch_num: int = 6,
     ) -> None:
         self.language = language
         self.use_angle_cls = use_angle_cls
         self.min_confidence = min_confidence
         self.enabled = enabled
+        self.det_db_thresh = det_db_thresh
+        self.rec_batch_num = rec_batch_num
         self._engine: Any | None = None
         self._engine_initialized = False
 
@@ -167,6 +177,12 @@ class OCRExtractor:
         blocks = parse_paddle_ocr_output(raw_output)
         return [block for block in blocks if block.confidence >= self.min_confidence]
 
+    async def extract_async(self, image: str | Path | Image) -> list[OCRTextBlock]:
+        """Async wrapper for extract()."""
+        import asyncio
+
+        return await asyncio.to_thread(self.extract, image)
+
     def _ensure_engine(self) -> None:
         if self._engine_initialized:
             return
@@ -184,6 +200,12 @@ class OCRExtractor:
                 use_angle_cls=self.use_angle_cls,
                 lang=self.language,
                 show_log=False,
+                det_db_thresh=self.det_db_thresh,
+                rec_batch_num=self.rec_batch_num,
+            )
+            logger.info(
+                f"PaddleOCR initialized (lang={self.language}, "
+                f"det_thresh={self.det_db_thresh}, batch={self.rec_batch_num})"
             )
         except Exception as exc:
             logger.warning(f"Failed to initialize PaddleOCR engine: {exc}")
