@@ -111,6 +111,66 @@ class ScreenState:
                 hints.append(f"Region [{region.index}] may have content above.")
         return hints
 
+    @property
+    def webview_elements(self) -> list[UIElement]:
+        """Elements inside a WebView (may need special handling)."""
+        return [e for e in self.elements if "WebView" in e.class_name]
+
+    @property
+    def has_webview(self) -> bool:
+        """Whether current screen contains a WebView."""
+        return len(self.webview_elements) > 0
+
+    def detect_modals(self) -> list[UIElement]:
+        """Detect modal dialogs, popups, and toasts on screen.
+
+        Heuristic: elements with Dialog/Popup/Toast in class name,
+        or elements that overlay a significant portion of the screen.
+        """
+        modal_classes = {"Dialog", "Popup", "Toast", "AlertDialog", "BottomSheet", "Snackbar"}
+        modals: list[UIElement] = []
+        for elem in self.elements:
+            class_short = elem.class_name.split(".")[-1]
+            if any(m in class_short for m in modal_classes):
+                modals.append(elem)
+        return modals
+
+    @property
+    def has_modal(self) -> bool:
+        return len(self.detect_modals()) > 0
+
+    def detect_occluded_elements(self) -> list[tuple[UIElement, UIElement]]:
+        """Find interactive elements potentially occluded by overlapping elements.
+
+        Returns list of (occluded_element, occluding_element) pairs.
+        Only considers interactive elements being occluded by elements
+        with higher z-order (later index in the tree).
+        """
+        occluded: list[tuple[UIElement, UIElement]] = []
+        interactive = self.interactive_elements
+
+        for i, elem_a in enumerate(interactive):
+            a_l, a_t, a_r, a_b = elem_a.bounds
+            a_area = (a_r - a_l) * (a_b - a_t)
+            if a_area <= 0:
+                continue
+
+            for elem_b in self.elements:
+                if elem_b.index <= elem_a.index:
+                    continue  # only later (higher z-order) can occlude
+                b_l, b_t, b_r, b_b = elem_b.bounds
+                # Check overlap
+                inter_l = max(a_l, b_l)
+                inter_t = max(a_t, b_t)
+                inter_r = min(a_r, b_r)
+                inter_b = min(a_b, b_b)
+                inter_area = max(0, inter_r - inter_l) * max(0, inter_b - inter_t)
+                if inter_area > a_area * 0.5:
+                    occluded.append((elem_a, elem_b))
+                    break  # one occluder is enough
+
+        return occluded
+
     def to_prompt_str(self) -> str:
         """Simplified screen representation for LLM context."""
         lines = [f"Screen: {self.activity}"]
@@ -128,6 +188,15 @@ class ScreenState:
                 lines.append("Viewport hints:")
                 for hint in hints[:4]:
                     lines.append(f"  - {hint}")
+        if self.has_webview:
+            lines.append("  [WebView detected — content may not be in accessibility tree]")
+        modals = self.detect_modals()
+        if modals:
+            modal_names = [m.class_name.split(".")[-1] for m in modals[:3]]
+            lines.append(f"  [Modal: {', '.join(modal_names)}]")
+        occluded = self.detect_occluded_elements()
+        if occluded:
+            lines.append(f"  [!] {len(occluded)} element(s) may be occluded")
         return "\n".join(lines)
 
 

@@ -138,9 +138,10 @@ class ActionRecord:
     error: str = ""
     duration_ms: float = 0.0
     attempts: int = 1
+    screen_hash: str = ""  # screen state hash before this action (for graph correlation)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "timestamp_ms": self.timestamp_ms,
             "action": self.action.to_dict(),
             "success": self.success,
@@ -148,6 +149,9 @@ class ActionRecord:
             "duration_ms": self.duration_ms,
             "attempts": self.attempts,
         }
+        if self.screen_hash:
+            d["screen_hash"] = self.screen_hash
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ActionRecord:
@@ -158,6 +162,7 @@ class ActionRecord:
             error=str(data.get("error", "")),
             duration_ms=float(data.get("duration_ms", 0.0)),
             attempts=max(1, int(data.get("attempts", 1))),
+            screen_hash=str(data.get("screen_hash", "")),
         )
 
 

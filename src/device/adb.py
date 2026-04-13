@@ -291,3 +291,82 @@ class ADBController:
             stats = ImageStat.Stat(diff)
             channel_mean = sum(stats.mean) / len(stats.mean)
             return float(channel_mean / 255.0)
+
+    @staticmethod
+    def compute_phash(image: "Image.Image", hash_size: int = 16) -> int:
+        """Compute perceptual hash (pHash) for fast image similarity.
+
+        Uses gradient-based approach: resize -> grayscale -> row/col gradients -> threshold.
+        Returns integer hash for Hamming distance comparison.
+        """
+        import numpy as np
+
+        # Resize to hash_size+1 to compute gradients
+        small = image.convert("L").resize((hash_size + 1, hash_size + 1))
+        pixels = np.array(small, dtype=np.float64)
+        # Horizontal gradient: pixel[x] > pixel[x+1]
+        h_bits = (pixels[:, 1:] > pixels[:, :-1])[:hash_size, :hash_size].flatten()
+        # Vertical gradient
+        v_bits = (pixels[1:, :] > pixels[:-1, :])[:hash_size, :hash_size].flatten()
+        all_bits = np.concatenate([h_bits, v_bits])
+        hash_val = 0
+        for bit in all_bits:
+            hash_val = (hash_val << 1) | int(bit)
+        return hash_val
+
+    @staticmethod
+    def phash_distance(hash_a: int, hash_b: int) -> int:
+        """Hamming distance between two perceptual hashes."""
+        return bin(hash_a ^ hash_b).count("1")
+
+    @staticmethod
+    def phash_similarity(hash_a: int, hash_b: int, hash_size: int = 16) -> float:
+        """Similarity score (0.0 to 1.0) between two pHashes."""
+        total_bits = 2 * hash_size * hash_size  # h_grad + v_grad
+        dist = bin(hash_a ^ hash_b).count("1")
+        return 1.0 - (dist / total_bits)
+
+    async def screenshot_diff_ratio_phash(
+        self, before: str | Path, after: str | Path, hash_size: int = 16,
+    ) -> float:
+        """Compare screenshots using perceptual hash (faster than pixel diff)."""
+        from PIL import Image
+
+        def _compute():
+            with Image.open(str(before)) as img_a, Image.open(str(after)) as img_b:
+                ha = ADBController.compute_phash(img_a, hash_size)
+                hb = ADBController.compute_phash(img_b, hash_size)
+                return 1.0 - ADBController.phash_similarity(ha, hb, hash_size)
+
+        return await asyncio.to_thread(_compute)
+
+    async def screenshot_diff_region(
+        self,
+        before: str | Path,
+        after: str | Path,
+        region: tuple[int, int, int, int],
+    ) -> float:
+        """Compare only a specific region of two screenshots.
+
+        Args:
+            before: Path to first screenshot.
+            after: Path to second screenshot.
+            region: (left, top, right, bottom) crop region to compare.
+
+        Returns:
+            Diff ratio (0.0 same, 1.0 fully different) for the specified region.
+        """
+        from PIL import Image, ImageChops, ImageStat
+
+        def _compute():
+            with Image.open(str(before)) as img_a, Image.open(str(after)) as img_b:
+                crop_a = img_a.convert("RGB").crop(region)
+                crop_b = img_b.convert("RGB").crop(region)
+                if crop_a.size != crop_b.size:
+                    crop_b = crop_b.resize(crop_a.size)
+                diff = ImageChops.difference(crop_a, crop_b)
+                stats = ImageStat.Stat(diff)
+                channel_mean = sum(stats.mean) / len(stats.mean)
+                return float(channel_mean / 255.0)
+
+        return await asyncio.to_thread(_compute)

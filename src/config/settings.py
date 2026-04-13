@@ -91,6 +91,8 @@ class AgentConfig(BaseModel):
     planner_confidence_threshold: float = 0.7
     ocr_enabled: bool = False
     ocr_min_confidence: float = 0.45
+    visual_enabled: bool = False
+    visual_max_image_size: int = 1024
     fusion_top_k: int = 5
     # Research mechanisms
     homeostasis_enabled: bool = True
