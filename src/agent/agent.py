@@ -22,8 +22,8 @@ from typing import Any
 from loguru import logger
 
 from src.config.settings import AgentConfig
-from src.device.adb import ADBController
 from src.device.actions import Action, ActionType
+from src.device.adb import ADBController
 from src.knowledge.graph import ScreenGraph
 from src.llm.client import LLMClient
 from src.llm.prompts import SYSTEM_PROMPT
@@ -214,23 +214,68 @@ class PhoneAgent:
 
     def _build_action(self, name: str, params: dict, screen: ScreenState) -> Action | None:
         """Convert LLM decision to executable Action."""
+        elems = screen.interactive_elements
+
+        def _resolve_center(index: int) -> tuple[int, int] | None:
+            if 0 <= index < len(elems):
+                return elems[index].center
+            return None
+
         if name == "tap":
             idx = params.get("index", 0)
-            elems = screen.interactive_elements
-            if 0 <= idx < len(elems):
-                x, y = elems[idx].center
+            center = _resolve_center(idx)
+            if center:
+                x, y = center
                 return Action.tap(x, y, f"Tap element [{idx}]")
         elif name == "type_text":
             idx = params.get("index", 0)
-            text = params.get("text", "")
-            elems = screen.interactive_elements
-            if 0 <= idx < len(elems):
-                x, y = elems[idx].center
+            center = _resolve_center(idx)
+            if center:
+                x, y = center
                 return Action.tap(x, y, f"Focus [{idx}] then type")
                 # Note: typing follows after tap, handled in _execute_action
+        elif name == "long_press":
+            idx = params.get("index", 0)
+            duration_ms = int(params.get("duration_ms", 800))
+            center = _resolve_center(idx)
+            if center:
+                x, y = center
+                return Action.long_press(x, y, duration_ms=duration_ms)
+        elif name == "double_tap":
+            idx = params.get("index", 0)
+            interval_ms = int(params.get("interval_ms", 120))
+            center = _resolve_center(idx)
+            if center:
+                x, y = center
+                return Action.double_tap(x, y, interval_ms=interval_ms)
+        elif name == "pinch_zoom":
+            zoom_in = bool(params.get("zoom_in", True))
+            distance = int(params.get("distance", 220))
+            duration_ms = int(params.get("duration_ms", 350))
+            if "index" in params:
+                center = _resolve_center(int(params.get("index", 0)))
+                if center:
+                    x, y = center
+                    return Action.pinch_zoom(
+                        x,
+                        y,
+                        distance=distance,
+                        zoom_in=zoom_in,
+                        duration_ms=duration_ms,
+                    )
+            x = int(params.get("x", 0))
+            y = int(params.get("y", 0))
+            return Action.pinch_zoom(
+                x,
+                y,
+                distance=distance,
+                zoom_in=zoom_in,
+                duration_ms=duration_ms,
+            )
         elif name == "scroll":
             direction = params.get("direction", "down")
-            return Action.scroll(direction)
+            amount = int(params.get("amount", 1))
+            return Action.scroll(direction, amount=max(1, amount))
         elif name == "back":
             return Action.back()
         elif name == "home":
@@ -248,6 +293,26 @@ class PhoneAgent:
         match action.type:
             case ActionType.TAP:
                 await self.adb.tap(action.params["x"], action.params["y"])
+            case ActionType.LONG_PRESS:
+                await self.adb.long_press(
+                    action.params["x"],
+                    action.params["y"],
+                    action.params.get("duration_ms", 800),
+                )
+            case ActionType.DOUBLE_TAP:
+                await self.adb.double_tap(
+                    action.params["x"],
+                    action.params["y"],
+                    action.params.get("interval_ms", 120),
+                )
+            case ActionType.PINCH_ZOOM:
+                await self.adb.pinch_zoom(
+                    action.params["x"],
+                    action.params["y"],
+                    distance=action.params.get("distance", 220),
+                    zoom_in=action.params.get("zoom_in", True),
+                    duration_ms=action.params.get("duration_ms", 350),
+                )
             case ActionType.SWIPE:
                 await self.adb.swipe(
                     action.params["x1"], action.params["y1"],
@@ -266,9 +331,14 @@ class PhoneAgent:
                 await self.adb.launch_app(action.params["package"])
             case ActionType.SCROLL:
                 direction = action.params.get("direction", "down")
-                # Scroll by swiping center of screen
-                cx, cy = 540, 960  # TODO: get from device resolution
-                dy = 500 if direction == "down" else -500
-                await self.adb.swipe(cx, cy, cx, cy - dy, 300)
+                amount = int(action.params.get("amount", 1))
+                width, height = await self.adb.get_screen_size()
+                cx = width // 2
+                if direction == "down":
+                    start_y, end_y = int(height * 0.7), int(height * 0.3)
+                else:
+                    start_y, end_y = int(height * 0.3), int(height * 0.7)
+                for _ in range(max(1, amount)):
+                    await self.adb.swipe(cx, start_y, cx, end_y, 300)
             case ActionType.WAIT:
                 await asyncio.sleep(action.params.get("ms", 1000) / 1000)

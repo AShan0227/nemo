@@ -8,6 +8,9 @@ You observe the current screen state (UI elements with indices) and decide the n
 Available actions:
 - tap(index): Tap the element at the given index
 - type_text(index, text): Focus element at index and type text
+- long_press(index, duration_ms): Long press the element
+- double_tap(index, interval_ms): Double tap the element
+- pinch_zoom(index|x,y, zoom_in, distance, duration_ms): Pinch or zoom on target
 - scroll(direction): Scroll "up" or "down"
 - back(): Press the back button
 - home(): Go to home screen
