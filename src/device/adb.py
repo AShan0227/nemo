@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,18 @@ if TYPE_CHECKING:
 
     from src.config.settings import DeviceConfig
 
+# Validation patterns for shell safety
+_KEYCODE_RE = re.compile(r"^[A-Z_0-9]+$")
+_PACKAGE_RE = re.compile(r"^[a-zA-Z0-9._]+$")
+
+
+def _escape_shell_text(text: str) -> str:
+    """Escape text for safe use in Android shell commands.
+
+    Wraps in single quotes and escapes embedded single quotes.
+    """
+    return "'" + text.replace("'", "'\\''") + "'"
+
 
 class ADBController:
     """Low-level Android device control via ADB."""
@@ -20,6 +33,7 @@ class ADBController:
     def __init__(self, config: DeviceConfig) -> None:
         self._config = config
         self._device = None
+        self._screen_size: tuple[int, int] | None = None
 
     async def connect(self) -> None:
         """Connect to device (auto-detect or by serial)."""
@@ -63,13 +77,28 @@ class ADBController:
         logger.debug(f"swipe({x1},{y1} -> {x2},{y2}, {duration_ms}ms)")
         await asyncio.to_thread(self.device.swipe, x1, y1, x2, y2, duration_ms / 1000)
 
+    async def get_screen_size(self) -> tuple[int, int]:
+        """Get device screen resolution (width, height). Cached after first call."""
+        if self._screen_size is None:
+            output = await asyncio.to_thread(self.device.shell, "wm size")
+            match = re.search(r"(\d+)x(\d+)", output)
+            if match:
+                self._screen_size = (int(match.group(1)), int(match.group(2)))
+            else:
+                logger.warning("Could not parse screen size, using 1080x1920 default")
+                self._screen_size = (1080, 1920)
+        return self._screen_size
+
     async def input_text(self, text: str) -> None:
-        """Input text via ADB shell."""
+        """Input text via ADB shell (safely escaped)."""
         logger.debug(f"input_text({text!r})")
-        await asyncio.to_thread(self.device.shell, f"input text '{text}'")
+        escaped = _escape_shell_text(text)
+        await asyncio.to_thread(self.device.shell, f"input text {escaped}")
 
     async def press_key(self, keycode: str) -> None:
         """Press a key (BACK, HOME, ENTER, etc.)."""
+        if not _KEYCODE_RE.match(keycode):
+            raise ValueError(f"Invalid keycode format: {keycode!r}")
         logger.debug(f"press_key({keycode})")
         await asyncio.to_thread(self.device.shell, f"input keyevent {keycode}")
 
@@ -94,6 +123,8 @@ class ADBController:
 
     async def launch_app(self, package: str) -> None:
         """Launch an app by package name."""
+        if not _PACKAGE_RE.match(package):
+            raise ValueError(f"Invalid package name: {package!r}")
         logger.info(f"Launching {package}")
         await asyncio.to_thread(
             self.device.shell,

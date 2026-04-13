@@ -64,6 +64,8 @@ class ScreenState:
     package: str = ""
     elements: list[UIElement] = field(default_factory=list)
     raw_xml: str = ""
+    fusion_confidence: float = 1.0  # from DS fusion (1.0 = no conflict)
+    fusion_conflict: float = 0.0    # conflict degree between sources
 
     @property
     def interactive_elements(self) -> list[UIElement]:

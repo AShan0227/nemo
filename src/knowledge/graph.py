@@ -2,13 +2,14 @@
 
 Nodes = screen states (identified by activity + UI hash)
 Edges = actions (tap, swipe, type, etc.) with cost weights
-Used by A* planner to find optimal task paths.
+Uses A* for optimal path planning and ACO for probabilistic action selection.
 """
 
 from __future__ import annotations
 
 import hashlib
 import heapq
+import random
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -120,11 +121,60 @@ class ScreenGraph:
 
         return None  # no path found
 
+    def select_action_aco(
+        self,
+        state_id: str,
+        alpha: float = 1.0,
+        beta: float = 2.0,
+        q0: float = 0.9,
+    ) -> ActionEdge | None:
+        """ACO action selection with Ant Colony System pseudo-random proportional rule.
+
+        With probability q0, greedily pick the best edge (exploitation).
+        With probability 1-q0, sample proportionally (exploration).
+
+        Args:
+            state_id: Current screen state hash
+            alpha: Pheromone importance weight
+            beta: Heuristic desirability weight (1/cost)
+            q0: Exploitation probability (0-1). Higher = more greedy.
+        """
+        edges = self.get_neighbors(state_id)
+        if not edges:
+            return None
+        if len(edges) == 1:
+            return edges[0]
+
+        # Compute attractiveness for each edge
+        scores = []
+        for e in edges:
+            tau = e.pheromone ** alpha
+            eta = (1.0 / max(e.cost, 0.01)) ** beta
+            scores.append(tau * eta)
+
+        # ACS: pseudo-random proportional rule
+        if random.random() < q0:
+            # Exploitation: pick the edge with highest score
+            best_idx = max(range(len(edges)), key=lambda i: scores[i])
+            return edges[best_idx]
+        else:
+            # Exploration: roulette wheel selection
+            total = sum(scores)
+            if total == 0:
+                return random.choice(edges)
+            pick = random.random() * total
+            cumulative = 0.0
+            for i, s in enumerate(scores):
+                cumulative += s
+                if cumulative >= pick:
+                    return edges[i]
+            return edges[-1]
+
     def evaporate_pheromones(self, rate: float = 0.05) -> None:
         """ACO pheromone evaporation — prevents lock-in to suboptimal paths."""
         for edges in self._edges.values():
             for edge in edges:
-                edge.pheromone *= 1.0 - rate
+                edge.pheromone = max(edge.pheromone * (1.0 - rate), 0.1)
 
     @staticmethod
     def compute_screen_hash(xml_dump: str) -> str:
