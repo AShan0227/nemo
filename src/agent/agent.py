@@ -1,13 +1,18 @@
 """PhoneAgent — the main agent loop.
 
-Observe → Think → Act → Verify cycle:
+Observe → Think → Act → Verify → Learn cycle with integrated research mechanisms:
 1. Capture screen state (UI hierarchy + OCR + visual fusion)
-2. Route to appropriate reasoning depth (entropy)
-3. LLM decides next action (or use cached/planned action)
-4. Safety layer validates action
-5. Execute action on device (with retry + screenshot verify)
-6. Update knowledge graph with transition
-7. Repeat until task complete or max steps
+2. Immune check: detect anomalous screens (crash, captcha, wrong app)
+3. Homeostasis: adjust behavior based on performance metrics
+4. Route to appropriate reasoning depth (entropy router)
+5. LLM decides next action (or use cached/planned action)
+6. Inertia: check plan stability before accepting deviation
+7. Safety layer validates action
+8. Execute action on device (with retry + screenshot verify)
+9. Explorer: update Boltzmann Q-values for state-action pairs
+10. Update knowledge graph with transition
+11. Phase detector: check for capability jumps
+12. Repeat until task complete or max steps
 """
 
 from __future__ import annotations
@@ -31,6 +36,11 @@ from src.knowledge.graph import ScreenGraph, ScreenNode
 from src.llm.client import LLMClient
 from src.llm.prompts import SYSTEM_PROMPT
 from src.llm.router import EntropyRouter, ReasoningDepth
+from src.research.explorer import BoltzmannExplorer
+from src.research.homeostasis import HomeostasisRegulator
+from src.research.immune import ImmuneSystem, extract_features
+from src.research.inertia import InertiaController
+from src.research.phase_detector import PerformanceSnapshot, PhaseDetector
 from src.safety.invariants import SafetyLayer, Verdict
 from src.screen.fusion import candidates_from_ocr, candidates_from_ui, fuse_screen_sources
 from src.screen.ocr import OCRExtractor
@@ -93,8 +103,18 @@ class PhoneAgent:
         )
         self.action_recorder = ActionRecorder()
         self.action_timing = ActionTimingTracker()
+
+        # Research mechanisms
+        self.homeostasis = HomeostasisRegulator() if config.homeostasis_enabled else None
+        self.immune = ImmuneSystem(anomaly_threshold=config.immune_anomaly_threshold) if config.immune_enabled else None
+        self.inertia = InertiaController(base_inertia=config.inertia_base) if config.inertia_enabled else None
+        self.explorer = BoltzmannExplorer(initial_temperature=config.explorer_temperature) if config.explorer_enabled else None
+        self.phase_detector = PhaseDetector() if config.phase_detector_enabled else None
+
         self._step_count = 0
         self._screen_size: tuple[int, int] = (1080, 1920)
+        self._task_start_time: float = 0.0
+        self._success_window: list[bool] = []
 
     async def connect(self) -> None:
         """Initialize device connection."""
@@ -120,6 +140,7 @@ class PhoneAgent:
         """Execute a user task end-to-end."""
         logger.info(f"Task: {task}")
         self._step_count = 0
+        self._task_start_time = time.time()
         steps: list[StepRecord] = []
         prev_screen_hash: str | None = None
         self.action_recorder.clear()
@@ -128,12 +149,13 @@ class PhoneAgent:
         while self._step_count < self.config.max_steps:
             self._step_count += 1
             logger.info(f"--- Step {self._step_count} ---")
+            step_start = time.perf_counter()
 
             # 1. Observe
             screen = await self._observe()
             screen_hash = ScreenGraph.compute_screen_hash(screen.raw_xml)
 
-            # Update graph node visit count
+            # Update graph node
             if screen_hash not in self.graph._nodes:
                 self.graph.add_node(ScreenNode(
                     state_id=screen_hash, activity=screen.activity,
@@ -141,7 +163,29 @@ class PhoneAgent:
                 ))
             self.graph._nodes[screen_hash].visit_count += 1
 
-            # 2. Route — decide reasoning depth
+            # 2. Immune check — detect anomalous screens
+            if self.immune and self.immune._trained:
+                features = extract_features(screen)
+                anomaly = self.immune.check(features)
+                if anomaly.is_anomaly:
+                    logger.warning(f"Anomaly detected: {anomaly.message}. Pressing back to recover.")
+                    await self.adb.press_back()
+                    await asyncio.sleep(0.5)
+                    continue
+            elif self.immune and not self.immune._trained:
+                # Still in training phase — collect self samples
+                self.immune.add_self_sample(extract_features(screen))
+                if len(self.immune._self_set) >= 20:
+                    self.immune.train()
+
+            # 3. Homeostasis — check if behavior adjustments needed
+            if self.homeostasis:
+                adjustments = self.homeostasis.get_adjustments()
+                for adj in adjustments:
+                    if adj.name == "increase_delay" and adj.value > 0.1:
+                        self.config.action_delay_ms = min(2000, self.config.action_delay_ms + 100)
+
+            # 4. Route — decide reasoning depth
             screen_context = await self._build_screen_context(screen)
             routing_decision = self._route_decision(screen_hash)
 
@@ -155,11 +199,11 @@ class PhoneAgent:
                     used_cache = True
                     logger.info("System 1: using cached action")
 
-            # 3. Think — LLM decision (if not cached)
+            # 5. Think — LLM decision (if not cached)
             if action_json is None:
                 action_json = await self.llm.decide_action(SYSTEM_PROMPT, screen_context, task)
 
-            # 4. Parse LLM response
+            # 6. Parse LLM response
             try:
                 decision = self._parse_decision(action_json)
             except Exception as e:
@@ -169,6 +213,7 @@ class PhoneAgent:
                     reasoning="parse_error", action="error", params={},
                     success=False, error=str(e),
                 ))
+                self._success_window.append(False)
                 continue
 
             reasoning = decision.get("reasoning", "")
@@ -181,13 +226,29 @@ class PhoneAgent:
                     step=self._step_count, screen_summary=screen_context[:200],
                     reasoning=reasoning, action="done", params=params, success=True,
                 ))
-                return TaskResult(
+                if self.inertia:
+                    self.inertia.clear_plan()
+                result = TaskResult(
                     status=TaskStatus.COMPLETED, summary=params.get("summary", reasoning),
                     steps=steps, total_steps=self._step_count,
                     timing_stats=self.action_timing.snapshot(),
                 )
+                self._on_task_complete(result)
+                return result
 
-            # 5. Build action
+            # 7. Inertia — check plan stability
+            if self.inertia and self.inertia.has_plan:
+                planned = self.inertia._commitment.next_planned_action
+                if planned and planned != action_name:
+                    inertia_decision = self.inertia.should_follow_plan(
+                        planned, action_name,
+                        new_action_confidence=routing_decision.confidence,
+                    )
+                    if inertia_decision.use_planned:
+                        action_name = planned
+                        logger.info(f"Inertia: keeping plan ({planned})")
+
+            # 8. Build action
             action = self._build_action(action_name, params, screen)
             if action is None:
                 steps.append(StepRecord(
@@ -195,9 +256,10 @@ class PhoneAgent:
                     reasoning=reasoning, action=action_name, params=params,
                     success=False, error=f"Unknown or invalid action: {action_name}",
                 ))
+                self._success_window.append(False)
                 continue
 
-            # 6. Safety check
+            # 9. Safety check
             if self.safety:
                 ctx = {
                     "screen_text": screen_context,
@@ -218,13 +280,14 @@ class PhoneAgent:
                         timing_stats=self.action_timing.snapshot(),
                     )
 
-            # 7. Execute with retry + verify
+            # 10. Execute with retry + verify
             success, error, duration_ms, attempts = await self._run_action_with_retry(action)
             self.action_timing.record(action.type, duration_ms, success)
             self.action_recorder.record(
                 timestamp_ms=int(time.time() * 1000), action=action,
                 success=success, error=error, duration_ms=duration_ms, attempts=attempts,
             )
+            self._success_window.append(success)
 
             steps.append(StepRecord(
                 step=self._step_count, screen_summary=screen_context[:200],
@@ -232,7 +295,13 @@ class PhoneAgent:
                 success=success, duration_ms=duration_ms, attempts=attempts, error=error,
             ))
 
-            # 8. Update knowledge graph with transition
+            # 11. Explorer — update Q-values
+            if self.explorer:
+                reward = 1.0 if success else -0.5
+                self.explorer.update_value(screen_hash, action_name, reward)
+                self.explorer.anneal()
+
+            # 12. Update knowledge graph
             if prev_screen_hash:
                 new_screen = await self._observe()
                 new_hash = ScreenGraph.compute_screen_hash(new_screen.raw_xml)
@@ -244,19 +313,56 @@ class PhoneAgent:
 
             prev_screen_hash = new_hash
 
+            # 13. Advance inertia plan
+            if self.inertia and success:
+                self.inertia.advance()
+
+            # 14. Homeostasis — update metrics
+            if self.homeostasis:
+                recent = self._success_window[-20:]
+                sr = sum(recent) / len(recent) if recent else 0.5
+                step_ms = (time.perf_counter() - step_start) * 1000
+                err = 1.0 - sr
+                self.homeostasis.update_metrics(
+                    success_rate=sr, response_latency_ms=step_ms, error_rate=err,
+                )
+
             # Periodic pheromone evaporation
             if self._step_count % 10 == 0:
                 self.graph.evaporate_pheromones()
 
-            # 9. Delay
+            # 15. Delay
             await asyncio.sleep(self.config.action_delay_ms / 1000)
 
-        return TaskResult(
+        result = TaskResult(
             status=TaskStatus.FAILED,
             summary=f"Max steps ({self.config.max_steps}) exceeded",
             steps=steps, total_steps=self._step_count,
             timing_stats=self.action_timing.snapshot(),
         )
+        self._on_task_complete(result)
+        return result
+
+    def _on_task_complete(self, result: TaskResult) -> None:
+        """Post-task hook: update phase detector."""
+        if not self.phase_detector:
+            return
+        recent = self._success_window[-20:]
+        sr = sum(recent) / len(recent) if recent else 0.0
+        snapshot = PerformanceSnapshot(
+            timestamp=time.time(),
+            success_rate=sr,
+            avg_steps=result.total_steps,
+            graph_nodes=len(self.graph._nodes),
+            graph_edges=sum(len(e) for e in self.graph._edges.values()),
+            task_count=1,
+        )
+        transition = self.phase_detector.record(snapshot)
+        if transition:
+            logger.info(
+                f"Phase transition: {transition.metric_name} "
+                f"{transition.old_value:.3f} -> {transition.new_value:.3f}"
+            )
 
     async def _run_action_with_retry(self, action: Action) -> tuple[bool, str, float, int]:
         """Execute action with step-level retry and optional visual verification."""

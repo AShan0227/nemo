@@ -58,6 +58,15 @@ class AgentConfig(BaseModel):
     ocr_enabled: bool = False
     ocr_min_confidence: float = 0.45
     fusion_top_k: int = 5
+    # Research mechanisms
+    homeostasis_enabled: bool = True
+    immune_enabled: bool = False  # needs training data first
+    immune_anomaly_threshold: int = 3
+    inertia_enabled: bool = True
+    inertia_base: float = 0.3
+    explorer_enabled: bool = False  # opt-in Boltzmann exploration
+    explorer_temperature: float = 1.0
+    phase_detector_enabled: bool = True
 
     @classmethod
     def from_yaml(cls, path: str) -> "AgentConfig":
