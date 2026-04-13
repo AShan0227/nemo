@@ -31,6 +31,9 @@ class AgentConfig(BaseModel):
     device: DeviceConfig = Field(default_factory=DeviceConfig)
     max_steps: int = 30
     action_delay_ms: int = 500
+    step_retry_count: int = 1
+    verify_enabled: bool = True
+    verify_diff_threshold: float = 0.01
     entropy_threshold_low: float = 0.3
     entropy_threshold_high: float = 0.7
     safety_enabled: bool = True

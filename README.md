@@ -64,6 +64,9 @@ adb devices
 # Run
 python -m src.main "Open WeChat and send hello to John"
 
+# Run milestone MVP scenario (with checkpoint report)
+python -m src.main --scenario wechat_message
+
 # Test
 pytest tests/
 ```
@@ -93,6 +96,9 @@ Then set:
 AgentConfig(
     safety_enabled=True,
     safety_rules_path="configs/safety_rules.example.yaml",
+    step_retry_count=1,
+    verify_enabled=True,
+    verify_diff_threshold=0.01,
     ocr_enabled=True,
     ocr_min_confidence=0.45,
     fusion_top_k=5,

@@ -137,6 +137,7 @@ class ActionRecord:
     success: bool
     error: str = ""
     duration_ms: float = 0.0
+    attempts: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -145,6 +146,7 @@ class ActionRecord:
             "success": self.success,
             "error": self.error,
             "duration_ms": self.duration_ms,
+            "attempts": self.attempts,
         }
 
     @classmethod
@@ -155,6 +157,7 @@ class ActionRecord:
             success=bool(data.get("success", False)),
             error=str(data.get("error", "")),
             duration_ms=float(data.get("duration_ms", 0.0)),
+            attempts=max(1, int(data.get("attempts", 1))),
         )
 
 
@@ -176,6 +179,7 @@ class ActionRecorder:
         success: bool,
         error: str = "",
         duration_ms: float = 0.0,
+        attempts: int = 1,
     ) -> None:
         self._records.append(
             ActionRecord(
@@ -184,6 +188,7 @@ class ActionRecorder:
                 success=success,
                 error=error,
                 duration_ms=duration_ms,
+                attempts=max(1, attempts),
             )
         )
 

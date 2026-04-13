@@ -31,6 +31,7 @@ def test_action_recorder_save_load(tmp_path: Path):
         success=False,
         error="timeout",
         duration_ms=300.0,
+        attempts=2,
     )
 
     path = recorder.save(tmp_path / "records.json")
@@ -40,6 +41,7 @@ def test_action_recorder_save_load(tmp_path: Path):
     assert loaded.records[0].action.type == ActionType.TAP
     assert loaded.records[1].success is False
     assert loaded.records[1].error == "timeout"
+    assert loaded.records[1].attempts == 2
 
 
 def test_action_timing_tracker_snapshot():

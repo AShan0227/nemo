@@ -18,6 +18,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -54,6 +55,7 @@ class StepRecord:
     params: dict[str, Any]
     success: bool
     duration_ms: float = 0.0
+    attempts: int = 1
     error: str = ""
 
 
@@ -155,6 +157,17 @@ class PhoneAgent:
 
             # 4. Build action
             action = self._build_action(action_name, params, screen)
+            if action is None:
+                steps.append(StepRecord(
+                    step=self._step_count,
+                    screen_summary=screen_context[:200],
+                    reasoning=reasoning,
+                    action=action_name,
+                    params=params,
+                    success=False,
+                    error=f"Unknown or invalid action: {action_name}",
+                ))
+                continue
 
             # 5. Safety check
             if self.safety and action:
@@ -184,27 +197,16 @@ class PhoneAgent:
                     )
 
             # 6. Execute
-            success = False
-            error = ""
-            duration_ms = 0.0
-            if action:
-                started_at = time.perf_counter()
-                try:
-                    await self._execute_action(action)
-                    success = True
-                except Exception as e:
-                    error = str(e)
-                    logger.error(f"Action failed: {e}")
-                finally:
-                    duration_ms = (time.perf_counter() - started_at) * 1000
-                    self.action_timing.record(action.type, duration_ms, success)
-                    self.action_recorder.record(
-                        timestamp_ms=int(time.time() * 1000),
-                        action=action,
-                        success=success,
-                        error=error,
-                        duration_ms=duration_ms,
-                    )
+            success, error, duration_ms, attempts = await self._run_action_with_retry(action)
+            self.action_timing.record(action.type, duration_ms, success)
+            self.action_recorder.record(
+                timestamp_ms=int(time.time() * 1000),
+                action=action,
+                success=success,
+                error=error,
+                duration_ms=duration_ms,
+                attempts=attempts,
+            )
 
             steps.append(StepRecord(
                 step=self._step_count,
@@ -214,6 +216,7 @@ class PhoneAgent:
                 params=params,
                 success=success,
                 duration_ms=duration_ms,
+                attempts=attempts,
                 error=error,
             ))
 
@@ -227,6 +230,56 @@ class PhoneAgent:
             total_steps=self._step_count,
             timing_stats=self.action_timing.snapshot(),
         )
+
+    async def _run_action_with_retry(
+        self,
+        action: Action,
+    ) -> tuple[bool, str, float, int]:
+        """Execute action with step-level retry and optional visual verification."""
+        max_attempts = max(1, self.config.step_retry_count + 1)
+        started = time.perf_counter()
+        last_error = ""
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                before_path: Path | None = None
+                if self._should_verify(action):
+                    before_path = await self.adb.save_screenshot()
+
+                await self._execute_action(action)
+
+                if before_path is not None:
+                    after_path = await self.adb.save_screenshot()
+                    changed = await self.adb.screenshot_changed(
+                        before_path,
+                        after_path,
+                        threshold=self.config.verify_diff_threshold,
+                    )
+                    if not changed:
+                        raise RuntimeError("verify_failed: screen appears unchanged")
+
+                total_duration = (time.perf_counter() - started) * 1000
+                return True, "", total_duration, attempt
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning(
+                    "Action {} failed attempt {}/{}: {}",
+                    action.type.value,
+                    attempt,
+                    max_attempts,
+                    last_error,
+                )
+                if attempt >= max_attempts:
+                    break
+                await asyncio.sleep(0.2)
+
+        total_duration = (time.perf_counter() - started) * 1000
+        return False, last_error, total_duration, max_attempts
+
+    def _should_verify(self, action: Action) -> bool:
+        if not self.config.verify_enabled:
+            return False
+        return action.type != ActionType.WAIT
 
     async def _observe(self) -> ScreenState:
         """Capture and parse current screen state."""
@@ -296,11 +349,15 @@ class PhoneAgent:
                 return Action.tap(x, y, f"Tap element [{idx}]")
         elif name == "type_text":
             idx = params.get("index", 0)
+            text = str(params.get("text", ""))
             center = _resolve_center(idx)
-            if center:
+            if center and text:
                 x, y = center
-                return Action.tap(x, y, f"Focus [{idx}] then type")
-                # Note: typing follows after tap, handled in _execute_action
+                return Action(
+                    ActionType.TYPE_TEXT,
+                    {"x": x, "y": y, "text": text},
+                    f"Type text in element [{idx}]",
+                )
         elif name == "long_press":
             idx = params.get("index", 0)
             duration_ms = int(params.get("duration_ms", 800))
@@ -387,6 +444,9 @@ class PhoneAgent:
                     action.params.get("duration_ms", 300),
                 )
             case ActionType.TYPE_TEXT:
+                if "x" in action.params and "y" in action.params:
+                    await self.adb.tap(action.params["x"], action.params["y"])
+                    await asyncio.sleep(0.1)
                 await self.adb.input_text(action.params["text"])
             case ActionType.PRESS_KEY:
                 await self.adb.press_key(action.params["keycode"])
