@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -22,7 +23,7 @@ from typing import Any
 from loguru import logger
 
 from src.config.settings import AgentConfig
-from src.device.actions import Action, ActionType
+from src.device.actions import Action, ActionRecorder, ActionTimingTracker, ActionType
 from src.device.adb import ADBController
 from src.knowledge.graph import ScreenGraph
 from src.llm.client import LLMClient
@@ -50,6 +51,7 @@ class StepRecord:
     action: str
     params: dict[str, Any]
     success: bool
+    duration_ms: float = 0.0
     error: str = ""
 
 
@@ -59,6 +61,7 @@ class TaskResult:
     summary: str = ""
     steps: list[StepRecord] = field(default_factory=list)
     total_steps: int = 0
+    timing_stats: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 class PhoneAgent:
@@ -78,6 +81,8 @@ class PhoneAgent:
             self.safety = None
         self.graph = ScreenGraph()
         self.screen_parser = ScreenParserCache()
+        self.action_recorder = ActionRecorder()
+        self.action_timing = ActionTimingTracker()
         self._step_count = 0
 
     async def connect(self) -> None:
@@ -90,6 +95,8 @@ class PhoneAgent:
         logger.info(f"Task: {task}")
         self._step_count = 0
         steps: list[StepRecord] = []
+        self.action_recorder.clear()
+        self.action_timing = ActionTimingTracker()
 
         while self._step_count < self.config.max_steps:
             self._step_count += 1
@@ -137,6 +144,7 @@ class PhoneAgent:
                     summary=params.get("summary", reasoning),
                     steps=steps,
                     total_steps=self._step_count,
+                    timing_stats=self.action_timing.snapshot(),
                 )
 
             # 4. Build action
@@ -166,18 +174,31 @@ class PhoneAgent:
                         summary=result.message,
                         steps=steps,
                         total_steps=self._step_count,
+                        timing_stats=self.action_timing.snapshot(),
                     )
 
             # 6. Execute
             success = False
             error = ""
+            duration_ms = 0.0
             if action:
+                started_at = time.perf_counter()
                 try:
                     await self._execute_action(action)
                     success = True
                 except Exception as e:
                     error = str(e)
                     logger.error(f"Action failed: {e}")
+                finally:
+                    duration_ms = (time.perf_counter() - started_at) * 1000
+                    self.action_timing.record(action.type, duration_ms, success)
+                    self.action_recorder.record(
+                        timestamp_ms=int(time.time() * 1000),
+                        action=action,
+                        success=success,
+                        error=error,
+                        duration_ms=duration_ms,
+                    )
 
             steps.append(StepRecord(
                 step=self._step_count,
@@ -186,6 +207,7 @@ class PhoneAgent:
                 action=action_name,
                 params=params,
                 success=success,
+                duration_ms=duration_ms,
                 error=error,
             ))
 
@@ -197,6 +219,7 @@ class PhoneAgent:
             summary=f"Max steps ({self.config.max_steps}) exceeded",
             steps=steps,
             total_steps=self._step_count,
+            timing_stats=self.action_timing.snapshot(),
         )
 
     async def _observe(self) -> ScreenState:
