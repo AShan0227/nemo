@@ -69,7 +69,13 @@ class PhoneAgent:
         self.adb = ADBController(config.device)
         self.llm = LLMClient(config.llm)
         self.router = EntropyRouter(config.entropy_threshold_low, config.entropy_threshold_high)
-        self.safety = SafetyLayer() if config.safety_enabled else None
+        if config.safety_enabled:
+            if config.safety_rules_path:
+                self.safety = SafetyLayer.from_yaml(config.safety_rules_path)
+            else:
+                self.safety = SafetyLayer(audit_log_path=config.safety_audit_log_path)
+        else:
+            self.safety = None
         self.graph = ScreenGraph()
         self._step_count = 0
 

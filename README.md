@@ -77,6 +77,25 @@ export LLM_API_KEY="your-key"
 
 Edit `src/config/settings.py` for model, device, and safety settings.
 
+Safety YAML example (optional):
+```yaml
+# configs/safety_rules.example.yaml
+rules:
+  financial_guard:
+    enabled: true
+  message_send_guard:
+    enabled: true
+audit_log_path: "./logs/safety_audit.log"
+```
+
+Then set:
+```python
+AgentConfig(
+    safety_enabled=True,
+    safety_rules_path="configs/safety_rules.example.yaml",
+)
+```
+
 ## Research
 
 See `docs/` and `research/` for deep technical research on physics-inspired and biology-inspired mechanisms behind this agent.

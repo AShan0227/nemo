@@ -1,0 +1,19 @@
+rules:
+  financial_guard:
+    enabled: true
+    severity: critical
+  permission_guard:
+    enabled: true
+  deletion_guard:
+    enabled: true
+  message_send_guard:
+    enabled: true
+  system_settings_guard:
+    enabled: true
+  app_uninstall_guard:
+    enabled: true
+  step_limit:
+    enabled: true
+
+# Set to null to disable file logging.
+audit_log_path: "./logs/safety_audit.log"

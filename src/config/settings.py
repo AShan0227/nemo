@@ -34,3 +34,5 @@ class AgentConfig(BaseModel):
     entropy_threshold_low: float = 0.3
     entropy_threshold_high: float = 0.7
     safety_enabled: bool = True
+    safety_rules_path: str | None = None
+    safety_audit_log_path: str | None = "./logs/safety_audit.log"
