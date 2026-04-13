@@ -1,12 +1,13 @@
 """Tests for agent action building, routing, and graph wiring."""
 
+from pathlib import Path
+
 from src.agent.agent import PhoneAgent
 from src.config.settings import AgentConfig
 from src.device.actions import ActionType
 from src.knowledge.graph import ScreenGraph
 from src.llm.router import EntropyRouter, ReasoningDepth
 from src.screen.parser import parse_ui_hierarchy
-
 from tests.conftest import SETTINGS_XML, WECHAT_CHAT_XML
 
 
@@ -151,3 +152,14 @@ def test_graph_record_and_query():
     assert len(edges) == 1
     assert edges[0].success_count == 2
     assert edges[0].pheromone > 1.0  # reinforced
+
+
+def test_agent_graph_persistence_helpers(tmp_path: Path):
+    path = tmp_path / "graph.json"
+    agent = PhoneAgent(AgentConfig(graph_persist_path=str(path), fusion_enabled=False))
+    agent.graph.record_transition("a", "b", "tap", success=True)
+    agent._save_graph_to_disk()
+
+    agent2 = PhoneAgent(AgentConfig(graph_persist_path=str(path), fusion_enabled=False))
+    agent2._load_graph_from_disk()
+    assert len(agent2.graph.get_neighbors("a")) == 1

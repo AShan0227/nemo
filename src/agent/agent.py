@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -34,7 +35,7 @@ from src.llm.router import EntropyRouter, ReasoningDepth
 from src.safety.invariants import SafetyLayer, Verdict
 from src.screen.fusion import candidates_from_ocr, candidates_from_ui, fuse_screen_sources
 from src.screen.ocr import OCRExtractor
-from src.screen.parser import ScreenParserCache, ScreenState, parse_ui_hierarchy
+from src.screen.parser import ScreenParserCache, ScreenState
 
 
 class TaskStatus(Enum):
@@ -100,6 +101,7 @@ class PhoneAgent:
         """Initialize device connection."""
         await self.adb.connect()
         self._screen_size = await self.adb.get_screen_size()
+        self._load_graph_from_disk()
         logger.info(f"PhoneAgent ready (screen: {self._screen_size[0]}x{self._screen_size[1]})")
 
     async def replay_recording(
@@ -122,6 +124,8 @@ class PhoneAgent:
         self._step_count = 0
         steps: list[StepRecord] = []
         prev_screen_hash: str | None = None
+        active_plan = None
+        plan_cursor = 0
         self.action_recorder.clear()
         self.action_timing = ActionTimingTracker()
 
@@ -145,7 +149,21 @@ class PhoneAgent:
             screen_context = await self._build_screen_context(screen)
             routing_decision = self._route_decision(screen_hash)
 
+            if self.config.planner_enabled and active_plan is None:
+                planner_chat = self._resolve_llm_method("chat")
+                if planner_chat is not None:
+                    try:
+                        active_plan = await self.planner.plan_with_llm(
+                            self.llm,
+                            task=task,
+                            current_app=screen.activity,
+                            screen_summary=screen_context,
+                        )
+                    except Exception as exc:
+                        logger.debug("Planner fallback unavailable: {}", exc)
+
             action_json: str | None = None
+            decision: dict[str, Any] | None = None
             used_cache = False
 
             if routing_decision.depth == ReasoningDepth.SYSTEM_1:
@@ -157,19 +175,70 @@ class PhoneAgent:
 
             # 3. Think — LLM decision (if not cached)
             if action_json is None:
-                action_json = await self.llm.decide_action(SYSTEM_PROMPT, screen_context, task)
+                planned_hint = self.planner.next_action_hint(active_plan, plan_cursor)
+                if (
+                    self.config.planner_enabled
+                    and planned_hint is not None
+                    and routing_decision.depth != ReasoningDepth.SYSTEM_2
+                ):
+                    decision = {
+                        "reasoning": "planner_fallback",
+                        "action": planned_hint.action_type,
+                        "params": planned_hint.params,
+                    }
+                    plan_cursor += 1
+                    logger.info(
+                        "Using planner hint step {} -> {}",
+                        planned_hint.step_number,
+                        planned_hint.action_type,
+                    )
+                else:
+                    structured_method = self._resolve_llm_method("decide_action_structured")
+                    if structured_method is not None:
+                        try:
+                            structured_payload = await structured_method(
+                                SYSTEM_PROMPT,
+                                screen_context,
+                                task,
+                            )
+                            if isinstance(structured_payload, dict):
+                                decision = structured_payload
+                            elif isinstance(structured_payload, str):
+                                action_json = structured_payload
+                            else:
+                                logger.debug(
+                                    "Structured decision ignored due to payload type: {}",
+                                    type(structured_payload).__name__,
+                                )
+                        except Exception as exc:
+                            logger.debug("Structured decision unavailable: {}", exc)
+
+                    if decision is None and action_json is None:
+                        decide_method = self._resolve_llm_method("decide_action")
+                        if decide_method is None:
+                            raise RuntimeError("LLM client missing `decide_action` interface")
+                        legacy_payload = await decide_method(
+                            SYSTEM_PROMPT,
+                            screen_context,
+                            task,
+                        )
+                        if isinstance(legacy_payload, dict):
+                            decision = legacy_payload
+                        else:
+                            action_json = str(legacy_payload)
 
             # 4. Parse LLM response
-            try:
-                decision = self._parse_decision(action_json)
-            except Exception as e:
-                logger.error(f"Failed to parse LLM response: {e}")
-                steps.append(StepRecord(
-                    step=self._step_count, screen_summary=screen_context[:200],
-                    reasoning="parse_error", action="error", params={},
-                    success=False, error=str(e),
-                ))
-                continue
+            if decision is None:
+                try:
+                    decision = self._parse_decision(action_json or "")
+                except Exception as e:
+                    logger.error(f"Failed to parse LLM response: {e}")
+                    steps.append(StepRecord(
+                        step=self._step_count, screen_summary=screen_context[:200],
+                        reasoning="parse_error", action="error", params={},
+                        success=False, error=str(e),
+                    ))
+                    continue
 
             reasoning = decision.get("reasoning", "")
             action_name = decision.get("action", "")
@@ -181,11 +250,13 @@ class PhoneAgent:
                     step=self._step_count, screen_summary=screen_context[:200],
                     reasoning=reasoning, action="done", params=params, success=True,
                 ))
-                return TaskResult(
+                result = TaskResult(
                     status=TaskStatus.COMPLETED, summary=params.get("summary", reasoning),
                     steps=steps, total_steps=self._step_count,
                     timing_stats=self.action_timing.snapshot(),
                 )
+                self._save_graph_to_disk()
+                return result
 
             # 5. Build action
             action = self._build_action(action_name, params, screen)
@@ -212,11 +283,13 @@ class PhoneAgent:
                         reasoning=reasoning, action=action_name, params=params,
                         success=False, error=f"Safety: {result.message}",
                     ))
-                    return TaskResult(
+                    blocked_result = TaskResult(
                         status=TaskStatus.BLOCKED, summary=result.message,
                         steps=steps, total_steps=self._step_count,
                         timing_stats=self.action_timing.snapshot(),
                     )
+                    self._save_graph_to_disk()
+                    return blocked_result
 
             # 7. Execute with retry + verify
             success, error, duration_ms, attempts = await self._run_action_with_retry(action)
@@ -238,7 +311,8 @@ class PhoneAgent:
                 new_hash = ScreenGraph.compute_screen_hash(new_screen.raw_xml)
                 self.graph.record_transition(prev_screen_hash, new_hash, action_name, success)
                 if success and not used_cache:
-                    self.router.cache_action(prev_screen_hash, action_json)
+                    cache_payload = action_json or json.dumps(decision, ensure_ascii=False)
+                    self.router.cache_action(prev_screen_hash, cache_payload)
             else:
                 new_hash = screen_hash
 
@@ -251,12 +325,38 @@ class PhoneAgent:
             # 9. Delay
             await asyncio.sleep(self.config.action_delay_ms / 1000)
 
-        return TaskResult(
+        failed_result = TaskResult(
             status=TaskStatus.FAILED,
             summary=f"Max steps ({self.config.max_steps}) exceeded",
             steps=steps, total_steps=self._step_count,
             timing_stats=self.action_timing.snapshot(),
         )
+        self._save_graph_to_disk()
+        return failed_result
+
+    def _load_graph_from_disk(self) -> None:
+        path_str = getattr(self.config, "graph_persist_path", None)
+        if not path_str:
+            return
+        path = Path(path_str)
+        if not path.exists():
+            return
+        try:
+            self.graph = ScreenGraph.load(path)
+            self.planner = TaskPlanner(self.graph)
+            logger.info("Loaded graph from {}", path)
+        except Exception as exc:
+            logger.warning("Failed to load graph from {}: {}", path, exc)
+
+    def _save_graph_to_disk(self) -> None:
+        path_str = getattr(self.config, "graph_persist_path", None)
+        if not path_str:
+            return
+        path = Path(path_str)
+        try:
+            self.graph.save(path)
+        except Exception as exc:
+            logger.warning("Failed to save graph to {}: {}", path, exc)
 
     async def _run_action_with_retry(self, action: Action) -> tuple[bool, str, float, int]:
         """Execute action with step-level retry and optional visual verification."""
@@ -360,6 +460,16 @@ class PhoneAgent:
         if start >= 0 and end > start:
             return json.loads(raw[start:end])
         raise ValueError(f"No JSON found in response: {raw[:200]}")
+
+    def _resolve_llm_method(self, name: str) -> Callable[..., Any] | None:
+        """Return a callable LLM method when explicitly present."""
+        instance_dict = getattr(self.llm, "__dict__", {})
+        has_instance_attr = isinstance(instance_dict, dict) and name in instance_dict
+        has_class_attr = hasattr(type(self.llm), name)
+        if not (has_instance_attr or has_class_attr):
+            return None
+        method = getattr(self.llm, name, None)
+        return method if callable(method) else None
 
     def _build_action(self, name: str, params: dict, screen: ScreenState) -> Action | None:
         """Convert LLM decision to executable Action."""

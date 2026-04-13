@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -15,6 +16,14 @@ def _make_non_stream_response(content: str) -> Any:
     message = SimpleNamespace(content=content, tool_calls=[])
     choice = SimpleNamespace(message=message)
     usage = SimpleNamespace(prompt_tokens=10, completion_tokens=20)
+    return SimpleNamespace(choices=[choice], usage=usage)
+
+
+def _make_tool_response(name: str, arguments: str, content: str = "") -> Any:
+    tool_call = SimpleNamespace(function=SimpleNamespace(name=name, arguments=arguments))
+    message = SimpleNamespace(content=content, tool_calls=[tool_call])
+    choice = SimpleNamespace(message=message)
+    usage = SimpleNamespace(prompt_tokens=5, completion_tokens=5)
     return SimpleNamespace(choices=[choice], usage=usage)
 
 
@@ -51,18 +60,24 @@ class FakeStream:
         return event
 
 
-def make_client() -> LLMClient:
+def make_client(**overrides: Any) -> LLMClient:
     config = SimpleNamespace(
+        provider="legacy",
         model="fake-model",
         api_key="fake-key",
         base_url="https://example.com/v1",
+        providers={},
+        fallback_providers=[],
         temperature=0.1,
         max_tokens=128,
         retry_count=2,
         retry_backoff_s=0,
         request_timeout_s=5,
         enable_stream=False,
+        tool_use_enabled=False,
     )
+    for key, value in overrides.items():
+        setattr(config, key, value)
     return LLMClient(config)  # type: ignore[arg-type]
 
 
@@ -113,4 +128,46 @@ async def test_decide_action_uses_chat_content():
 
     client.chat = fake_chat  # type: ignore[method-assign]
     result = await client.decide_action("sys", "screen", "task")
-    assert '"action":"done"' in result
+    payload = json.loads(result)
+    assert payload["action"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_decide_action_structured_prefers_tool_call():
+    client = make_client(tool_use_enabled=True)
+
+    async def fake_chat(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "content": "Choosing tap",
+            "tool_calls": [{"name": "tap", "arguments": "{\"index\": 2}"}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        }
+
+    client.chat = fake_chat  # type: ignore[method-assign]
+    decision = await client.decide_action_structured("sys", "screen", "task")
+    assert decision["action"] == "tap"
+    assert decision["params"]["index"] == 2
+
+
+@pytest.mark.asyncio
+async def test_provider_fallback_switches_to_secondary():
+    providers = {
+        "qwen": SimpleNamespace(model="qwen-plus", base_url="https://qwen", api_key="k1"),
+        "gpt": SimpleNamespace(model="gpt-4o-mini", base_url="https://openai", api_key="k2"),
+    }
+    client = make_client(
+        provider="qwen",
+        providers=providers,
+        fallback_providers=["gpt"],
+        retry_count=0,
+    )
+    client._client = SimpleNamespace(  # primary provider client
+        chat=SimpleNamespace(completions=FakeCompletions(responses=[RuntimeError("qwen down")]))
+    )
+    client._provider_clients["gpt"] = SimpleNamespace(
+        chat=SimpleNamespace(completions=FakeCompletions(responses=[_make_non_stream_response("ok-gpt")]))
+    )
+
+    result = await client.chat([{"role": "user", "content": "hi"}], stream=False)
+    assert result["content"] == "ok-gpt"
+    assert result["provider"] == "gpt"
