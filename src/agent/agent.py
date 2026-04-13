@@ -1,18 +1,18 @@
 """PhoneAgent — the main agent loop.
 
-Observe → Think → Act → Verify → Learn cycle with integrated research mechanisms:
+Observe → Think → Act → Verify → Learn cycle with research mechanisms:
 1. Capture screen state (UI hierarchy + OCR + visual fusion)
-2. Immune check: detect anomalous screens (crash, captcha, wrong app)
-3. Homeostasis: adjust behavior based on performance metrics
-4. Route to appropriate reasoning depth (entropy router)
-5. LLM decides next action (or use cached/planned action)
-6. Inertia: check plan stability before accepting deviation
-7. Safety layer validates action
-8. Execute action on device (with retry + screenshot verify)
-9. Explorer: update Boltzmann Q-values for state-action pairs
-10. Update knowledge graph with transition
-11. Phase detector: check for capability jumps
-12. Repeat until task complete or max steps
+2. Immune check: detect anomalous screens
+3. Homeostasis + Circadian: adjust behavior based on metrics and time
+4. Route to reasoning depth (entropy router)
+5. Planner: LLM fallback planning for unknown territories
+6. LLM decides next action (structured tool_use or legacy JSON)
+7. Inertia: check plan stability before accepting deviation
+8. Safety layer validates action
+9. Execute action (with retry + screenshot verify)
+10. Explorer: update Boltzmann Q-values
+11. Update knowledge graph + cache + genome encode
+12. Phase detector: check for capability jumps
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -59,8 +60,6 @@ class TaskStatus(Enum):
 
 @dataclass
 class StepRecord:
-    """Record of a single agent step."""
-
     step: int
     screen_summary: str
     reasoning: str
@@ -99,10 +98,7 @@ class PhoneAgent:
         self.graph = ScreenGraph()
         self.planner = TaskPlanner(self.graph)
         self.screen_parser = ScreenParserCache()
-        self.ocr = OCRExtractor(
-            enabled=config.ocr_enabled,
-            min_confidence=config.ocr_min_confidence,
-        )
+        self.ocr = OCRExtractor(enabled=config.ocr_enabled, min_confidence=config.ocr_min_confidence)
         self.action_recorder = ActionRecorder()
         self.action_timing = ActionTimingTracker()
 
@@ -123,21 +119,13 @@ class PhoneAgent:
         """Initialize device connection and load persisted graph."""
         await self.adb.connect()
         self._screen_size = await self.adb.get_screen_size()
-        # Load persisted knowledge graph
-        if self.config.graph_persist_path:
-            self.graph = ScreenGraph.load(self.config.graph_persist_path)
-            self.planner = TaskPlanner(self.graph)
+        self._load_graph_from_disk()
         logger.info(f"PhoneAgent ready (screen: {self._screen_size[0]}x{self._screen_size[1]})")
 
     async def replay_recording(
-        self,
-        path: str | Path,
-        *,
-        speed: float = 1.0,
-        preserve_timing: bool = True,
-        stop_on_error: bool = True,
+        self, path: str | Path, *, speed: float = 1.0,
+        preserve_timing: bool = True, stop_on_error: bool = True,
     ) -> ReplayReport:
-        """Replay a previously recorded action trace."""
         replayer = ActionReplayer(self._execute_action)
         return await replayer.replay_file(
             path, speed=speed, preserve_timing=preserve_timing, stop_on_error=stop_on_error,
@@ -150,6 +138,8 @@ class PhoneAgent:
         self._task_start_time = time.time()
         steps: list[StepRecord] = []
         prev_screen_hash: str | None = None
+        active_plan = None
+        plan_cursor = 0
         self.action_recorder.clear()
         self.action_timing = ActionTimingTracker()
 
@@ -162,7 +152,6 @@ class PhoneAgent:
             screen = await self._observe()
             screen_hash = ScreenGraph.compute_screen_hash(screen.raw_xml)
 
-            # Update graph node
             if screen_hash not in self.graph._nodes:
                 self.graph.add_node(ScreenNode(
                     state_id=screen_hash, activity=screen.activity,
@@ -170,40 +159,48 @@ class PhoneAgent:
                 ))
             self.graph._nodes[screen_hash].visit_count += 1
 
-            # 2. Immune check — detect anomalous screens
+            # 2. Immune check
             if self.immune and self.immune._trained:
                 features = extract_features(screen)
                 anomaly = self.immune.check(features)
                 if anomaly.is_anomaly:
-                    logger.warning(f"Anomaly detected: {anomaly.message}. Pressing back to recover.")
+                    logger.warning(f"Anomaly detected: {anomaly.message}. Pressing back.")
                     await self.adb.press_back()
                     await asyncio.sleep(0.5)
                     continue
             elif self.immune and not self.immune._trained:
-                # Still in training phase — collect self samples
                 self.immune.add_self_sample(extract_features(screen))
                 if len(self.immune._self_set) >= 20:
                     self.immune.train()
 
-            # 3. Homeostasis — check if behavior adjustments needed
+            # 3. Homeostasis + Circadian
             if self.homeostasis:
-                adjustments = self.homeostasis.get_adjustments()
-                for adj in adjustments:
+                for adj in self.homeostasis.get_adjustments():
                     if adj.name == "increase_delay" and adj.value > 0.1:
                         self.config.action_delay_ms = min(2000, self.config.action_delay_ms + 100)
-
-            # 3b. Circadian — apply time-of-day behavior modifiers
             if self.circadian:
                 mods = self.circadian.get_behavior_modifier()
-                # Scale action delay by time-of-day multiplier (e.g. slower at night)
-                effective_delay = int(self.config.action_delay_ms * mods["action_delay_multiplier"])
-                self.config.action_delay_ms = min(3000, effective_delay)
+                self.config.action_delay_ms = min(
+                    3000, int(self.config.action_delay_ms * mods["action_delay_multiplier"]))
 
-            # 4. Route — decide reasoning depth
+            # 4. Route
             screen_context = await self._build_screen_context(screen)
             routing_decision = self._route_decision(screen_hash)
 
+            # 4b. Planner LLM fallback (first step only)
+            if self.config.planner_enabled and active_plan is None:
+                planner_chat = self._resolve_llm_method("chat")
+                if planner_chat is not None:
+                    try:
+                        active_plan = await self.planner.plan_with_llm(
+                            self.llm, task=task,
+                            current_app=screen.activity, screen_summary=screen_context,
+                        )
+                    except Exception as exc:
+                        logger.debug("Planner fallback unavailable: {}", exc)
+
             action_json: str | None = None
+            decision: dict[str, Any] | None = None
             used_cache = False
 
             if routing_decision.depth == ReasoningDepth.SYSTEM_1:
@@ -213,28 +210,61 @@ class PhoneAgent:
                     used_cache = True
                     logger.info("System 1: using cached action")
 
-            # 5. Think — LLM decision (if not cached)
-            if action_json is None:
-                action_json = await self.llm.decide_action(SYSTEM_PROMPT, screen_context, task)
+            # 5. Think — planner hint, structured tool_use, or legacy JSON
+            if action_json is None and decision is None:
+                planned_hint = self.planner.next_action_hint(active_plan, plan_cursor)
+                if (self.config.planner_enabled and planned_hint is not None
+                        and routing_decision.depth != ReasoningDepth.SYSTEM_2):
+                    decision = {
+                        "reasoning": "planner_fallback",
+                        "action": planned_hint.action_type,
+                        "params": planned_hint.params,
+                    }
+                    plan_cursor += 1
+                    logger.info("Using planner hint step {} -> {}", planned_hint.step_number, planned_hint.action_type)
+                else:
+                    # Try structured tool_use first
+                    structured_method = self._resolve_llm_method("decide_action_structured")
+                    if structured_method is not None:
+                        try:
+                            payload = await structured_method(SYSTEM_PROMPT, screen_context, task)
+                            if isinstance(payload, dict):
+                                decision = payload
+                            elif isinstance(payload, str):
+                                action_json = payload
+                        except Exception:
+                            pass
 
-            # 6. Parse LLM response
-            try:
-                decision = self._parse_decision(action_json)
-            except Exception as e:
-                logger.error(f"Failed to parse LLM response: {e}")
-                steps.append(StepRecord(
-                    step=self._step_count, screen_summary=screen_context[:200],
-                    reasoning="parse_error", action="error", params={},
-                    success=False, error=str(e),
-                ))
-                self._success_window.append(False)
-                continue
+                    # Fallback to legacy decide_action
+                    if decision is None and action_json is None:
+                        decide_method = self._resolve_llm_method("decide_action")
+                        if decide_method is None:
+                            raise RuntimeError("LLM client missing `decide_action` interface")
+                        legacy = await decide_method(SYSTEM_PROMPT, screen_context, task)
+                        if isinstance(legacy, dict):
+                            decision = legacy
+                        else:
+                            action_json = str(legacy)
+
+            # 6. Parse
+            if decision is None:
+                try:
+                    decision = self._parse_decision(action_json)
+                except Exception as e:
+                    logger.error(f"Failed to parse LLM response: {e}")
+                    steps.append(StepRecord(
+                        step=self._step_count, screen_summary=screen_context[:200],
+                        reasoning="parse_error", action="error", params={},
+                        success=False, error=str(e),
+                    ))
+                    self._success_window.append(False)
+                    continue
 
             reasoning = decision.get("reasoning", "")
             action_name = decision.get("action", "")
             params = decision.get("params", {})
 
-            # Check if task is done
+            # Done check
             if action_name == "done":
                 steps.append(StepRecord(
                     step=self._step_count, screen_summary=screen_context[:200],
@@ -250,14 +280,12 @@ class PhoneAgent:
                 self._on_task_complete(result)
                 return result
 
-            # 7. Inertia — check plan stability
+            # 7. Inertia
             if self.inertia and self.inertia.has_plan:
                 planned = self.inertia._commitment.next_planned_action
                 if planned and planned != action_name:
                     inertia_decision = self.inertia.should_follow_plan(
-                        planned, action_name,
-                        new_action_confidence=routing_decision.confidence,
-                    )
+                        planned, action_name, new_action_confidence=routing_decision.confidence)
                     if inertia_decision.use_planned:
                         action_name = planned
                         logger.info(f"Inertia: keeping plan ({planned})")
@@ -275,11 +303,7 @@ class PhoneAgent:
 
             # 9. Safety check
             if self.safety:
-                ctx = {
-                    "screen_text": screen_context,
-                    "step_count": self._step_count,
-                    "max_steps": self.config.max_steps,
-                }
+                ctx = {"screen_text": screen_context, "step_count": self._step_count, "max_steps": self.config.max_steps}
                 result = self.safety.check(action, ctx)
                 if result.verdict == Verdict.BLOCK:
                     logger.warning(f"BLOCKED: {result.message}")
@@ -288,11 +312,13 @@ class PhoneAgent:
                         reasoning=reasoning, action=action_name, params=params,
                         success=False, error=f"Safety: {result.message}",
                     ))
-                    return TaskResult(
+                    blocked_result = TaskResult(
                         status=TaskStatus.BLOCKED, summary=result.message,
                         steps=steps, total_steps=self._step_count,
                         timing_stats=self.action_timing.snapshot(),
                     )
+                    self._save_graph_to_disk()
+                    return blocked_result
 
             # 10. Execute with retry + verify
             success, error, duration_ms, attempts = await self._run_action_with_retry(action)
@@ -309,10 +335,9 @@ class PhoneAgent:
                 success=success, duration_ms=duration_ms, attempts=attempts, error=error,
             ))
 
-            # 11. Explorer — update Q-values
+            # 11. Explorer Q-values
             if self.explorer:
-                reward = 1.0 if success else -0.5
-                self.explorer.update_value(screen_hash, action_name, reward)
+                self.explorer.update_value(screen_hash, action_name, 1.0 if success else -0.5)
                 self.explorer.anneal()
 
             # 12. Update knowledge graph
@@ -321,153 +346,146 @@ class PhoneAgent:
                 new_hash = ScreenGraph.compute_screen_hash(new_screen.raw_xml)
                 self.graph.record_transition(prev_screen_hash, new_hash, action_name, success)
                 if success and not used_cache:
-                    self.router.cache_action(prev_screen_hash, action_json)
+                    self.router.cache_action(prev_screen_hash, action_json or json.dumps(decision))
             else:
                 new_hash = screen_hash
-
             prev_screen_hash = new_hash
 
-            # 13. Advance inertia plan
+            # 13. Inertia advance + circadian record
             if self.inertia and success:
                 self.inertia.advance()
-
-            # 14. Circadian — record activity
             if self.circadian and screen.package:
                 self.circadian.record_activity(screen.package, action_name, duration_ms=duration_ms)
 
-            # 15. Homeostasis — update metrics
+            # 14. Homeostasis metrics
             if self.homeostasis:
                 recent = self._success_window[-20:]
                 sr = sum(recent) / len(recent) if recent else 0.5
                 step_ms = (time.perf_counter() - step_start) * 1000
-                err = 1.0 - sr
-                self.homeostasis.update_metrics(
-                    success_rate=sr, response_latency_ms=step_ms, error_rate=err,
-                )
+                self.homeostasis.update_metrics(success_rate=sr, response_latency_ms=step_ms, error_rate=1.0 - sr)
 
-            # Periodic pheromone evaporation
             if self._step_count % 10 == 0:
                 self.graph.evaporate_pheromones()
 
-            # 16. Delay
             await asyncio.sleep(self.config.action_delay_ms / 1000)
 
-        result = TaskResult(
+        failed_result = TaskResult(
             status=TaskStatus.FAILED,
             summary=f"Max steps ({self.config.max_steps}) exceeded",
             steps=steps, total_steps=self._step_count,
             timing_stats=self.action_timing.snapshot(),
         )
-        self._on_task_complete(result)
-        return result
+        self._on_task_complete(failed_result)
+        return failed_result
+
+    # --- Post-task hooks ---
 
     def _on_task_complete(self, result: TaskResult) -> None:
-        """Post-task hook: phase detector, graph persistence, genome encoding."""
-        # Phase detector
         if self.phase_detector:
             recent = self._success_window[-20:]
             sr = sum(recent) / len(recent) if recent else 0.0
-            snapshot = PerformanceSnapshot(
-                timestamp=time.time(),
-                success_rate=sr,
-                avg_steps=result.total_steps,
+            transition = self.phase_detector.record(PerformanceSnapshot(
+                timestamp=time.time(), success_rate=sr, avg_steps=result.total_steps,
                 graph_nodes=len(self.graph._nodes),
-                graph_edges=sum(len(e) for e in self.graph._edges.values()),
-                task_count=1,
-            )
-            transition = self.phase_detector.record(snapshot)
+                graph_edges=sum(len(e) for e in self.graph._edges.values()), task_count=1,
+            ))
             if transition:
-                logger.info(
-                    f"Phase transition: {transition.metric_name} "
-                    f"{transition.old_value:.3f} -> {transition.new_value:.3f}"
-                )
-
-        # Persist knowledge graph
-        if self.config.graph_persist_path:
-            self.graph.save(self.config.graph_persist_path)
-
-        # Encode completed task as workflow genome (for future evolution)
+                logger.info(f"Phase transition: {transition.metric_name} "
+                            f"{transition.old_value:.3f} -> {transition.new_value:.3f}")
+        self._save_graph_to_disk()
         if result.status == TaskStatus.COMPLETED and result.steps:
             genome = self._encode_task_genome(result)
-            logger.debug(f"Task genome: {len(genome.codons)} codons, encoded={genome.encode()[:10]}...")
+            logger.debug(f"Task genome: {len(genome.codons)} codons")
 
     def _encode_task_genome(self, result: TaskResult) -> Workflow:
-        """Convert completed task steps into a workflow genome."""
         _ACTION_TO_OPCODE = {
             "tap": Opcode.TAP, "type_text": Opcode.TYP, "scroll": Opcode.SCR,
             "back": Opcode.BCK, "home": Opcode.HOM, "launch": Opcode.LCH,
             "wait": Opcode.WAT, "done": Opcode.DON,
         }
-        codons = []
-        text_table: dict[int, str] = {}
-        text_idx = 0
-
+        codons, text_table, text_idx = [], {}, 0
         for step in result.steps:
             opcode = _ACTION_TO_OPCODE.get(step.action, Opcode.NOP)
             operand = 0
             if step.action == "tap":
                 operand = step.params.get("index", 0)
-            elif step.action == "type_text":
-                text = step.params.get("text", "")
-                text_table[text_idx] = text
-                operand = text_idx
-                text_idx += 1
-            elif step.action == "launch":
-                pkg = step.params.get("package", "")
-                text_table[text_idx] = pkg
+            elif step.action in ("type_text", "launch"):
+                key = "text" if step.action == "type_text" else "package"
+                text_table[text_idx] = step.params.get(key, "")
                 operand = text_idx
                 text_idx += 1
             elif step.action == "scroll":
                 operand = 0 if step.params.get("direction") == "down" else 1
             codons.append(Codon(opcode, operand, step.reasoning[:30]))
+        return Workflow(name=result.summary[:50], genes=[Gene("task_trace", codons)], text_table=text_table)
 
-        gene = Gene(name="task_trace", codons=codons)
-        return Workflow(name=result.summary[:50], genes=[gene], text_table=text_table)
+    # --- Graph persistence ---
+
+    def _load_graph_from_disk(self) -> None:
+        path_str = getattr(self.config, "graph_persist_path", None)
+        if not path_str:
+            return
+        path = Path(path_str)
+        if not path.exists():
+            return
+        try:
+            self.graph = ScreenGraph.load(path)
+            self.planner = TaskPlanner(self.graph)
+            logger.info("Loaded graph from {}", path)
+        except Exception as exc:
+            logger.warning("Failed to load graph from {}: {}", path, exc)
+
+    def _save_graph_to_disk(self) -> None:
+        path_str = getattr(self.config, "graph_persist_path", None)
+        if not path_str:
+            return
+        try:
+            self.graph.save(path_str)
+        except Exception as exc:
+            logger.warning("Failed to save graph to {}: {}", path_str, exc)
+
+    # --- LLM method resolution (supports structured tool_use + legacy) ---
+
+    def _resolve_llm_method(self, name: str) -> Callable[..., Any] | None:
+        instance_dict = getattr(self.llm, "__dict__", {})
+        has_instance_attr = isinstance(instance_dict, dict) and name in instance_dict
+        has_class_attr = hasattr(type(self.llm), name)
+        if not (has_instance_attr or has_class_attr):
+            return None
+        method = getattr(self.llm, name, None)
+        return method if callable(method) else None
+
+    # --- Action execution ---
 
     async def _run_action_with_retry(self, action: Action) -> tuple[bool, str, float, int]:
-        """Execute action with step-level retry and optional visual verification."""
         max_attempts = max(1, self.config.step_retry_count + 1)
         started = time.perf_counter()
         last_error = ""
-
         for attempt in range(1, max_attempts + 1):
             try:
                 before_path: Path | None = None
                 if self._should_verify(action):
                     before_path = await self.adb.save_screenshot()
-
                 await self._execute_action(action)
-
                 if before_path is not None:
                     after_path = await self.adb.save_screenshot()
                     changed = await self.adb.screenshot_changed(
-                        before_path, after_path, threshold=self.config.verify_diff_threshold,
-                    )
+                        before_path, after_path, threshold=self.config.verify_diff_threshold)
                     if not changed:
                         raise RuntimeError("verify_failed: screen appears unchanged")
-
-                total_duration = (time.perf_counter() - started) * 1000
-                return True, "", total_duration, attempt
+                return True, "", (time.perf_counter() - started) * 1000, attempt
             except Exception as exc:
                 last_error = str(exc)
-                logger.warning(
-                    "Action {} failed attempt {}/{}: {}",
-                    action.type.value, attempt, max_attempts, last_error,
-                )
+                logger.warning("Action {} failed attempt {}/{}: {}", action.type.value, attempt, max_attempts, last_error)
                 if attempt >= max_attempts:
                     break
                 await asyncio.sleep(0.2)
-
-        total_duration = (time.perf_counter() - started) * 1000
-        return False, last_error, total_duration, max_attempts
+        return False, last_error, (time.perf_counter() - started) * 1000, max_attempts
 
     def _should_verify(self, action: Action) -> bool:
-        if not self.config.verify_enabled:
-            return False
-        return action.type != ActionType.WAIT
+        return self.config.verify_enabled and action.type != ActionType.WAIT
 
     async def _observe(self) -> ScreenState:
-        """Capture and parse current screen state."""
         xml = await self.adb.get_ui_hierarchy()
         state, dedup_hit = self.screen_parser.parse(xml)
         if dedup_hit:
@@ -475,29 +493,22 @@ class PhoneAgent:
         return state
 
     async def _build_screen_context(self, screen: ScreenState) -> str:
-        """Build LLM-visible screen context with optional OCR/fusion hints."""
         context = screen.to_prompt_str()
         if not self.config.ocr_enabled:
             return context
-
         try:
             screenshot = await self.adb.screenshot()
             ocr_blocks = await asyncio.to_thread(self.ocr.extract, screenshot)
         except Exception as exc:
-            logger.warning(f"Failed to run OCR during observe: {exc}")
+            logger.warning(f"Failed to run OCR: {exc}")
             return context
-
         if not ocr_blocks:
             return context
-
         fusion = fuse_screen_sources(
             ui_candidates=candidates_from_ui(screen.interactive_elements),
-            ocr_candidates=candidates_from_ocr(
-                ocr_blocks, min_confidence=self.config.ocr_min_confidence,
-            ),
+            ocr_candidates=candidates_from_ocr(ocr_blocks, min_confidence=self.config.ocr_min_confidence),
             top_k=self.config.fusion_top_k,
         )
-
         lines = [context, "", f"OCR lines ({len(ocr_blocks)}):"]
         for block in ocr_blocks[:8]:
             lines.append(f'  - "{block.text}" ({block.confidence:.2f})')
@@ -507,7 +518,6 @@ class PhoneAgent:
         return "\n".join(lines)
 
     def _route_decision(self, screen_hash: str):
-        """Decide reasoning depth based on graph knowledge (entropy proxy)."""
         node = self.graph._nodes.get(screen_hash)
         if node is None:
             return self.router.route(screen_hash, [1.0])
@@ -516,11 +526,9 @@ class PhoneAgent:
             return self.router.route(screen_hash, [0.5, 0.5])
         rates = [max(e.success_rate, 0.01) for e in edges]
         total = sum(rates)
-        probs = [r / total for r in rates]
-        return self.router.route(screen_hash, probs)
+        return self.router.route(screen_hash, [r / total for r in rates])
 
     def _parse_decision(self, raw: str) -> dict[str, Any]:
-        """Extract JSON from LLM response."""
         start = raw.find("{")
         end = raw.rfind("}") + 1
         if start >= 0 and end > start:
@@ -528,28 +536,20 @@ class PhoneAgent:
         raise ValueError(f"No JSON found in response: {raw[:200]}")
 
     def _build_action(self, name: str, params: dict, screen: ScreenState) -> Action | None:
-        """Convert LLM decision to executable Action."""
         elems = screen.interactive_elements
 
         def _resolve_center(index: int) -> tuple[int, int] | None:
-            if 0 <= index < len(elems):
-                return elems[index].center
-            return None
+            return elems[index].center if 0 <= index < len(elems) else None
 
         if name == "tap":
             center = _resolve_center(params.get("index", 0))
             if center:
-                return Action.tap(center[0], center[1], f"Tap element [{params.get('index', 0)}]")
+                return Action.tap(center[0], center[1], f"Tap [{params.get('index', 0)}]")
         elif name == "type_text":
-            idx = params.get("index", 0)
-            text = params.get("text", "")
+            idx, text = params.get("index", 0), params.get("text", "")
             center = _resolve_center(idx)
             if center:
-                return Action(
-                    ActionType.TYPE_TEXT,
-                    {"x": center[0], "y": center[1], "text": text},
-                    f"Type '{text}' at [{idx}]",
-                )
+                return Action(ActionType.TYPE_TEXT, {"x": center[0], "y": center[1], "text": text}, f"Type '{text}' at [{idx}]")
         elif name == "scroll":
             return Action.scroll(params.get("direction", "down"))
         elif name == "back":
@@ -565,16 +565,13 @@ class PhoneAgent:
         return None
 
     async def _execute_action(self, action: Action) -> None:
-        """Execute an action on the device."""
         t = action.type
         if t == ActionType.TAP:
             await self.adb.tap(action.params["x"], action.params["y"])
         elif t == ActionType.SWIPE:
-            await self.adb.swipe(
-                action.params["x1"], action.params["y1"],
-                action.params["x2"], action.params["y2"],
-                action.params.get("duration_ms", 300),
-            )
+            await self.adb.swipe(action.params["x1"], action.params["y1"],
+                                 action.params["x2"], action.params["y2"],
+                                 action.params.get("duration_ms", 300))
         elif t == ActionType.TYPE_TEXT:
             if "x" in action.params and "y" in action.params:
                 await self.adb.tap(action.params["x"], action.params["y"])

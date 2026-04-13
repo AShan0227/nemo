@@ -1,5 +1,7 @@
 """Tests for screen state knowledge graph."""
 
+from pathlib import Path
+
 from src.knowledge.graph import ActionEdge, ScreenGraph, ScreenNode
 
 
@@ -43,3 +45,16 @@ def test_pheromone_evaporation():
     initial_pheromone = g.get_neighbors("a")[0].pheromone
     g.evaporate_pheromones(0.1)
     assert g.get_neighbors("a")[0].pheromone < initial_pheromone
+
+
+def test_graph_save_load_roundtrip(tmp_path: Path):
+    g = ScreenGraph()
+    g.record_transition("home", "settings", "tap", success=True)
+    g.record_transition("settings", "wifi", "tap", success=False)
+
+    path = g.save(tmp_path / "graph.json")
+    loaded = ScreenGraph.load(path)
+
+    assert len(loaded._nodes) == len(g._nodes)
+    assert len(loaded.get_neighbors("home")) == 1
+    assert loaded.get_neighbors("settings")[0].failure_count == 1
