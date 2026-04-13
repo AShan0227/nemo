@@ -36,7 +36,9 @@ from src.knowledge.graph import ScreenGraph, ScreenNode
 from src.llm.client import LLMClient
 from src.llm.prompts import SYSTEM_PROMPT
 from src.llm.router import EntropyRouter, ReasoningDepth
+from src.research.circadian import CircadianModel
 from src.research.explorer import BoltzmannExplorer
+from src.research.genome import Codon, Gene, Opcode, Workflow
 from src.research.homeostasis import HomeostasisRegulator
 from src.research.immune import ImmuneSystem, extract_features
 from src.research.inertia import InertiaController
@@ -110,6 +112,7 @@ class PhoneAgent:
         self.inertia = InertiaController(base_inertia=config.inertia_base) if config.inertia_enabled else None
         self.explorer = BoltzmannExplorer(initial_temperature=config.explorer_temperature) if config.explorer_enabled else None
         self.phase_detector = PhaseDetector() if config.phase_detector_enabled else None
+        self.circadian = CircadianModel() if config.circadian_enabled else None
 
         self._step_count = 0
         self._screen_size: tuple[int, int] = (1080, 1920)
@@ -117,9 +120,13 @@ class PhoneAgent:
         self._success_window: list[bool] = []
 
     async def connect(self) -> None:
-        """Initialize device connection."""
+        """Initialize device connection and load persisted graph."""
         await self.adb.connect()
         self._screen_size = await self.adb.get_screen_size()
+        # Load persisted knowledge graph
+        if self.config.graph_persist_path:
+            self.graph = ScreenGraph.load(self.config.graph_persist_path)
+            self.planner = TaskPlanner(self.graph)
         logger.info(f"PhoneAgent ready (screen: {self._screen_size[0]}x{self._screen_size[1]})")
 
     async def replay_recording(
@@ -184,6 +191,13 @@ class PhoneAgent:
                 for adj in adjustments:
                     if adj.name == "increase_delay" and adj.value > 0.1:
                         self.config.action_delay_ms = min(2000, self.config.action_delay_ms + 100)
+
+            # 3b. Circadian — apply time-of-day behavior modifiers
+            if self.circadian:
+                mods = self.circadian.get_behavior_modifier()
+                # Scale action delay by time-of-day multiplier (e.g. slower at night)
+                effective_delay = int(self.config.action_delay_ms * mods["action_delay_multiplier"])
+                self.config.action_delay_ms = min(3000, effective_delay)
 
             # 4. Route — decide reasoning depth
             screen_context = await self._build_screen_context(screen)
@@ -317,7 +331,11 @@ class PhoneAgent:
             if self.inertia and success:
                 self.inertia.advance()
 
-            # 14. Homeostasis — update metrics
+            # 14. Circadian — record activity
+            if self.circadian and screen.package:
+                self.circadian.record_activity(screen.package, action_name, duration_ms=duration_ms)
+
+            # 15. Homeostasis — update metrics
             if self.homeostasis:
                 recent = self._success_window[-20:]
                 sr = sum(recent) / len(recent) if recent else 0.5
@@ -331,7 +349,7 @@ class PhoneAgent:
             if self._step_count % 10 == 0:
                 self.graph.evaporate_pheromones()
 
-            # 15. Delay
+            # 16. Delay
             await asyncio.sleep(self.config.action_delay_ms / 1000)
 
         result = TaskResult(
@@ -344,25 +362,67 @@ class PhoneAgent:
         return result
 
     def _on_task_complete(self, result: TaskResult) -> None:
-        """Post-task hook: update phase detector."""
-        if not self.phase_detector:
-            return
-        recent = self._success_window[-20:]
-        sr = sum(recent) / len(recent) if recent else 0.0
-        snapshot = PerformanceSnapshot(
-            timestamp=time.time(),
-            success_rate=sr,
-            avg_steps=result.total_steps,
-            graph_nodes=len(self.graph._nodes),
-            graph_edges=sum(len(e) for e in self.graph._edges.values()),
-            task_count=1,
-        )
-        transition = self.phase_detector.record(snapshot)
-        if transition:
-            logger.info(
-                f"Phase transition: {transition.metric_name} "
-                f"{transition.old_value:.3f} -> {transition.new_value:.3f}"
+        """Post-task hook: phase detector, graph persistence, genome encoding."""
+        # Phase detector
+        if self.phase_detector:
+            recent = self._success_window[-20:]
+            sr = sum(recent) / len(recent) if recent else 0.0
+            snapshot = PerformanceSnapshot(
+                timestamp=time.time(),
+                success_rate=sr,
+                avg_steps=result.total_steps,
+                graph_nodes=len(self.graph._nodes),
+                graph_edges=sum(len(e) for e in self.graph._edges.values()),
+                task_count=1,
             )
+            transition = self.phase_detector.record(snapshot)
+            if transition:
+                logger.info(
+                    f"Phase transition: {transition.metric_name} "
+                    f"{transition.old_value:.3f} -> {transition.new_value:.3f}"
+                )
+
+        # Persist knowledge graph
+        if self.config.graph_persist_path:
+            self.graph.save(self.config.graph_persist_path)
+
+        # Encode completed task as workflow genome (for future evolution)
+        if result.status == TaskStatus.COMPLETED and result.steps:
+            genome = self._encode_task_genome(result)
+            logger.debug(f"Task genome: {len(genome.codons)} codons, encoded={genome.encode()[:10]}...")
+
+    def _encode_task_genome(self, result: TaskResult) -> Workflow:
+        """Convert completed task steps into a workflow genome."""
+        _ACTION_TO_OPCODE = {
+            "tap": Opcode.TAP, "type_text": Opcode.TYP, "scroll": Opcode.SCR,
+            "back": Opcode.BCK, "home": Opcode.HOM, "launch": Opcode.LCH,
+            "wait": Opcode.WAT, "done": Opcode.DON,
+        }
+        codons = []
+        text_table: dict[int, str] = {}
+        text_idx = 0
+
+        for step in result.steps:
+            opcode = _ACTION_TO_OPCODE.get(step.action, Opcode.NOP)
+            operand = 0
+            if step.action == "tap":
+                operand = step.params.get("index", 0)
+            elif step.action == "type_text":
+                text = step.params.get("text", "")
+                text_table[text_idx] = text
+                operand = text_idx
+                text_idx += 1
+            elif step.action == "launch":
+                pkg = step.params.get("package", "")
+                text_table[text_idx] = pkg
+                operand = text_idx
+                text_idx += 1
+            elif step.action == "scroll":
+                operand = 0 if step.params.get("direction") == "down" else 1
+            codons.append(Codon(opcode, operand, step.reasoning[:30]))
+
+        gene = Gene(name="task_trace", codons=codons)
+        return Workflow(name=result.summary[:50], genes=[gene], text_table=text_table)
 
     async def _run_action_with_retry(self, action: Action) -> tuple[bool, str, float, int]:
         """Execute action with step-level retry and optional visual verification."""

@@ -136,6 +136,59 @@ async def test_immune_training_phase():
 
 
 @pytest.mark.asyncio
+async def test_circadian_records_activity():
+    """Circadian model should record app activity during execution."""
+    agent = _make_agent(homeostasis_enabled=False)
+    agent.config.circadian_enabled = True
+    from src.research.circadian import CircadianModel
+    agent.circadian = CircadianModel()
+    _mock_adb(agent, [SETTINGS_XML, WIFI_XML, WIFI_XML, WIFI_XML])
+    _mock_llm(agent, [
+        make_llm_response("tap", {"index": 1}, "Tap Wi-Fi"),
+        make_llm_response("done", {"summary": "Done"}),
+    ])
+
+    await agent.execute("Open Wi-Fi")
+    assert agent.circadian.coverage["total_activities"] > 0
+
+
+@pytest.mark.asyncio
+async def test_genome_encoding_on_complete():
+    """Completed task should produce a genome encoding."""
+    agent = _make_agent()
+    _mock_adb(agent, [SETTINGS_XML, WIFI_XML, WIFI_XML, WIFI_XML])
+    _mock_llm(agent, [
+        make_llm_response("tap", {"index": 1}, "Tap Wi-Fi"),
+        make_llm_response("done", {"summary": "Wi-Fi opened"}),
+    ])
+
+    result = await agent.execute("Open Wi-Fi")
+    assert result.status == TaskStatus.COMPLETED
+    genome = agent._encode_task_genome(result)
+    assert len(genome.codons) == 2  # tap + done
+    assert genome.encode()  # should produce integers
+
+
+@pytest.mark.asyncio
+async def test_graph_save_load(tmp_path):
+    """Graph should save/load correctly."""
+    from src.knowledge.graph import ScreenGraph
+    g = ScreenGraph()
+    g.record_transition("s1", "s2", "tap", success=True)
+    g.record_transition("s1", "s2", "tap", success=True)
+
+    path = tmp_path / "graph.json"
+    g.save(path)
+    assert path.exists()
+
+    loaded = ScreenGraph.load(path)
+    assert len(loaded._nodes) == 2
+    edges = loaded.get_neighbors("s1")
+    assert len(edges) == 1
+    assert edges[0].success_count == 2
+
+
+@pytest.mark.asyncio
 async def test_all_mechanisms_together():
     """All research mechanisms enabled simultaneously should not crash."""
     agent = _make_agent(

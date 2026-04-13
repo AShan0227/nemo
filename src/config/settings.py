@@ -67,6 +67,8 @@ class AgentConfig(BaseModel):
     explorer_enabled: bool = False  # opt-in Boltzmann exploration
     explorer_temperature: float = 1.0
     phase_detector_enabled: bool = True
+    circadian_enabled: bool = True
+    graph_persist_path: Optional[str] = None  # e.g. "./data/graph.json"
 
     @classmethod
     def from_yaml(cls, path: str) -> "AgentConfig":

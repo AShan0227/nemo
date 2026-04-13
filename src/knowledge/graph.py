@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import heapq
+import json
 import random
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 
 @dataclass
@@ -175,6 +179,39 @@ class ScreenGraph:
         for edges in self._edges.values():
             for edge in edges:
                 edge.pheromone = max(edge.pheromone * (1.0 - rate), 0.1)
+
+    def save(self, path: str | Path) -> None:
+        """Persist graph to JSON file."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "nodes": {k: asdict(v) for k, v in self._nodes.items()},
+            "edges": {
+                k: [asdict(e) for e in edges]
+                for k, edges in self._edges.items()
+            },
+        }
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        logger.info(f"Graph saved: {len(self._nodes)} nodes, "
+                     f"{sum(len(e) for e in self._edges.values())} edges -> {path}")
+
+    @classmethod
+    def load(cls, path: str | Path) -> ScreenGraph:
+        """Load graph from JSON file."""
+        path = Path(path)
+        if not path.exists():
+            logger.info(f"No graph file at {path}, starting fresh")
+            return cls()
+        data = json.loads(path.read_text())
+        graph = cls()
+        for node_data in data.get("nodes", {}).values():
+            graph.add_node(ScreenNode(**node_data))
+        for edge_list in data.get("edges", {}).values():
+            for edge_data in edge_list:
+                graph.add_edge(ActionEdge(**edge_data))
+        logger.info(f"Graph loaded: {len(graph._nodes)} nodes, "
+                     f"{sum(len(e) for e in graph._edges.values())} edges <- {path}")
+        return graph
 
     @staticmethod
     def compute_screen_hash(xml_dump: str) -> str:
