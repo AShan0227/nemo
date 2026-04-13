@@ -242,6 +242,13 @@ class PhoneAgent:
         match action.type:
             case ActionType.TAP:
                 await self.adb.tap(action.params["x"], action.params["y"])
+            case ActionType.LONG_PRESS:
+                await self.adb.long_press(
+                    action.params["x"], action.params["y"],
+                    action.params.get("duration_ms", 1000),
+                )
+            case ActionType.DOUBLE_TAP:
+                await self.adb.double_tap(action.params["x"], action.params["y"])
             case ActionType.SWIPE:
                 await self.adb.swipe(
                     action.params["x1"], action.params["y1"],
@@ -260,9 +267,15 @@ class PhoneAgent:
                 await self.adb.launch_app(action.params["package"])
             case ActionType.SCROLL:
                 direction = action.params.get("direction", "down")
-                # Scroll by swiping center of screen
-                cx, cy = 540, 960  # TODO: get from device resolution
-                dy = 500 if direction == "down" else -500
+                sw, sh = self.adb.screen_size
+                cx, cy = sw // 2, sh // 2
+                dy = sh // 4 if direction == "down" else -(sh // 4)
                 await self.adb.swipe(cx, cy, cx, cy - dy, 300)
+            case ActionType.PINCH_ZOOM:
+                await self.adb.pinch_zoom(
+                    action.params["cx"], action.params["cy"],
+                    action.params.get("zoom_in", True),
+                    action.params.get("scale", 0.5),
+                )
             case ActionType.WAIT:
                 await asyncio.sleep(action.params.get("ms", 1000) / 1000)
