@@ -67,6 +67,10 @@ python -m src.main "Open WeChat and send hello to John"
 # Run milestone MVP scenario (with checkpoint report)
 python -m src.main --scenario wechat_message
 
+# Save executed actions, then replay
+python -m src.main "打开设置" --record-out ./artifacts/actions.json
+python -m src.main --replay ./artifacts/actions.json --replay-speed 2.0
+
 # Test
 pytest tests/
 ```

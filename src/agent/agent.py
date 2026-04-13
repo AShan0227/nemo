@@ -26,6 +26,7 @@ from loguru import logger
 from src.config.settings import AgentConfig
 from src.device.actions import Action, ActionRecorder, ActionTimingTracker, ActionType
 from src.device.adb import ADBController
+from src.device.replay import ActionReplayer, ReplayReport
 from src.knowledge.graph import ScreenGraph
 from src.llm.client import LLMClient
 from src.llm.prompts import SYSTEM_PROMPT
@@ -97,6 +98,23 @@ class PhoneAgent:
         """Initialize device connection."""
         await self.adb.connect()
         logger.info("PhoneAgent ready")
+
+    async def replay_recording(
+        self,
+        path: str | Path,
+        *,
+        speed: float = 1.0,
+        preserve_timing: bool = True,
+        stop_on_error: bool = True,
+    ) -> ReplayReport:
+        """Replay a previously recorded action trace."""
+        replayer = ActionReplayer(self._execute_action)
+        return await replayer.replay_file(
+            path,
+            speed=speed,
+            preserve_timing=preserve_timing,
+            stop_on_error=stop_on_error,
+        )
 
     async def execute(self, task: str) -> TaskResult:
         """Execute a user task end-to-end."""
