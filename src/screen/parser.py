@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -79,6 +81,24 @@ class ScreenState:
         return "\n".join(lines)
 
 
+class ScreenParserCache:
+    """Cache parser result by screen hash to skip duplicate parsing."""
+
+    def __init__(self) -> None:
+        self._last_hash: str | None = None
+        self._last_state: ScreenState | None = None
+
+    def parse(self, xml_str: str) -> tuple[ScreenState, bool]:
+        screen_hash = compute_screen_hash(xml_str)
+        if self._last_hash == screen_hash and self._last_state is not None:
+            return self._last_state, True
+
+        state = parse_ui_hierarchy(xml_str)
+        self._last_hash = screen_hash
+        self._last_state = state
+        return state, False
+
+
 def _parse_bounds(bounds_str: str) -> tuple[int, int, int, int]:
     """Parse '[left,top][right,bottom]' format."""
     try:
@@ -88,34 +108,88 @@ def _parse_bounds(bounds_str: str) -> tuple[int, int, int, int]:
         return (0, 0, 0, 0)
 
 
+def _parse_bool(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.lower() in {"true", "1"}
+
+
+def _parse_optional_bool(value: str | None) -> bool | None:
+    if value is None or value == "":
+        return None
+    if value.lower() in {"true", "1"}:
+        return True
+    if value.lower() in {"false", "0"}:
+        return False
+    return None
+
+
+def _first_non_empty_attr(node: ET.Element, *keys: str) -> str:
+    for key in keys:
+        value = node.get(key)
+        if value not in {None, ""}:
+            return value
+    return ""
+
+
+def _extract_xml_payload(raw: str) -> str | None:
+    start_positions = [pos for pos in (raw.find("<?xml"), raw.find("<hierarchy")) if pos != -1]
+    if not start_positions:
+        return None
+    return raw[min(start_positions):]
+
+
+def _sanitize_xml(raw: str) -> str:
+    # Drop non-printable control chars that frequently break XML parser on some devices.
+    return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", raw)
+
+
+def compute_screen_hash(xml_str: str) -> str:
+    """Compute deterministic hash for screen dedupe."""
+    payload = _extract_xml_payload(xml_str) or xml_str
+    normalized = re.sub(r"\s+", " ", _sanitize_xml(payload)).strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 def parse_ui_hierarchy(xml_str: str) -> ScreenState:
     """Parse uiautomator XML dump into ScreenState."""
-    # Strip the prefix that uiautomator dump adds
-    xml_start = xml_str.find("<?xml")
-    if xml_start == -1:
-        xml_start = xml_str.find("<hierarchy")
-    if xml_start == -1:
+    payload = _extract_xml_payload(xml_str)
+    if payload is None:
         return ScreenState(raw_xml=xml_str)
 
-    xml_str = xml_str[xml_start:]
-    root = ET.fromstring(xml_str)
+    cleaned_payload = _sanitize_xml(payload)
+    try:
+        root = ET.fromstring(cleaned_payload)
+    except ET.ParseError:
+        return ScreenState(raw_xml=cleaned_payload)
+
     elements: list[UIElement] = []
     idx = 0
+    package_hint = _first_non_empty_attr(root, "package")
 
     def _walk(node: ET.Element) -> UIElement | None:
         nonlocal idx
+        nonlocal package_hint
+        class_name = _first_non_empty_attr(node, "class", "className")
+        resource_id = _first_non_empty_attr(node, "resource-id", "resourceId")
+        content_desc = _first_non_empty_attr(node, "content-desc", "contentDescription")
+        text = _first_non_empty_attr(node, "text")
+        if not package_hint:
+            package_hint = _first_non_empty_attr(node, "package")
+
         elem = UIElement(
             index=idx,
-            resource_id=node.get("resource-id", ""),
-            class_name=node.get("class", ""),
-            text=node.get("text", ""),
-            content_desc=node.get("content-desc", ""),
-            bounds=_parse_bounds(node.get("bounds", "")),
-            clickable=node.get("clickable") == "true",
-            scrollable=node.get("scrollable") == "true",
-            editable=node.get("class", "").endswith("EditText"),
-            checked=node.get("checked") == "true" if node.get("checked") else None,
-            enabled=node.get("enabled", "true") == "true",
+            resource_id=resource_id,
+            class_name=class_name,
+            text=text,
+            content_desc=content_desc,
+            bounds=_parse_bounds(_first_non_empty_attr(node, "bounds")),
+            clickable=_parse_bool(_first_non_empty_attr(node, "clickable")),
+            scrollable=_parse_bool(_first_non_empty_attr(node, "scrollable")),
+            editable=class_name.endswith("EditText")
+            or _parse_bool(_first_non_empty_attr(node, "editable")),
+            checked=_parse_optional_bool(node.get("checked")),
+            enabled=_parse_bool(node.get("enabled"), default=True),
         )
         idx += 1
         for child in node:
@@ -128,10 +202,16 @@ def parse_ui_hierarchy(xml_str: str) -> ScreenState:
     for child in root:
         _walk(child)
 
-    package = root.get("package", "")
+    package = package_hint
+    if not package:
+        for elem in elements:
+            if ":" in elem.resource_id:
+                package = elem.resource_id.split(":", maxsplit=1)[0]
+                break
+
     return ScreenState(
         activity=package,
         package=package,
         elements=elements,
-        raw_xml=xml_str,
+        raw_xml=cleaned_payload,
     )

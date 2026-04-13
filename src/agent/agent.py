@@ -29,7 +29,7 @@ from src.llm.client import LLMClient
 from src.llm.prompts import SYSTEM_PROMPT
 from src.llm.router import EntropyRouter
 from src.safety.invariants import SafetyLayer, Verdict
-from src.screen.parser import ScreenState, parse_ui_hierarchy
+from src.screen.parser import ScreenParserCache, ScreenState
 
 
 class TaskStatus(Enum):
@@ -77,6 +77,7 @@ class PhoneAgent:
         else:
             self.safety = None
         self.graph = ScreenGraph()
+        self.screen_parser = ScreenParserCache()
         self._step_count = 0
 
     async def connect(self) -> None:
@@ -201,7 +202,10 @@ class PhoneAgent:
     async def _observe(self) -> ScreenState:
         """Capture and parse current screen state."""
         xml = await self.adb.get_ui_hierarchy()
-        return parse_ui_hierarchy(xml)
+        state, dedup_hit = self.screen_parser.parse(xml)
+        if dedup_hit:
+            logger.debug("Screen hash unchanged, reusing last parsed state")
+        return state
 
     def _parse_decision(self, raw: str) -> dict[str, Any]:
         """Extract JSON from LLM response."""
