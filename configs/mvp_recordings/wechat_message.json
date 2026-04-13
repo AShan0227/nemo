@@ -1,0 +1,60 @@
+{
+  "records": [
+    {
+      "timestamp_ms": 0,
+      "action": {"type": "launch_app", "params": {"package": "com.tencent.mm"}, "description": "Launch WeChat", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 2000.0,
+      "attempts": 1,
+      "screen_hash": "wechat_home"
+    },
+    {
+      "timestamp_ms": 2500,
+      "action": {"type": "tap", "params": {"x": 950, "y": 80}, "description": "Tap search icon", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 300.0,
+      "attempts": 1,
+      "screen_hash": "wechat_search"
+    },
+    {
+      "timestamp_ms": 3200,
+      "action": {"type": "type_text", "params": {"text": "张三"}, "description": "Type contact name", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 500.0,
+      "attempts": 1,
+      "screen_hash": "wechat_search_input"
+    },
+    {
+      "timestamp_ms": 4000,
+      "action": {"type": "tap", "params": {"x": 540, "y": 300}, "description": "Tap contact result", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 300.0,
+      "attempts": 1,
+      "screen_hash": "wechat_search_results"
+    },
+    {
+      "timestamp_ms": 5000,
+      "action": {"type": "tap", "params": {"x": 540, "y": 1750}, "description": "Tap message input", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 200.0,
+      "attempts": 1,
+      "screen_hash": "wechat_chat"
+    },
+    {
+      "timestamp_ms": 5500,
+      "action": {"type": "type_text", "params": {"text": "明天开会"}, "description": "Type message content", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 400.0,
+      "attempts": 1,
+      "screen_hash": "wechat_chat_typing"
+    },
+    {
+      "timestamp_ms": 6200,
+      "action": {"type": "tap", "params": {"x": 1000, "y": 1750}, "description": "Tap send button", "is_reversible": false, "risk_level": 0.3},
+      "success": true,
+      "duration_ms": 200.0,
+      "attempts": 1,
+      "screen_hash": "wechat_chat_sent"
+    }
+  ]
+}

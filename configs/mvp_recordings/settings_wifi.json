@@ -1,0 +1,28 @@
+{
+  "records": [
+    {
+      "timestamp_ms": 0,
+      "action": {"type": "home", "params": {}, "description": "Press home", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 500.0,
+      "attempts": 1,
+      "screen_hash": "launcher_home"
+    },
+    {
+      "timestamp_ms": 1000,
+      "action": {"type": "launch_app", "params": {"package": "com.android.settings"}, "description": "Launch Settings", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 1500.0,
+      "attempts": 1,
+      "screen_hash": "settings_main"
+    },
+    {
+      "timestamp_ms": 3000,
+      "action": {"type": "tap", "params": {"x": 540, "y": 400}, "description": "Tap WiFi option", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 300.0,
+      "attempts": 1,
+      "screen_hash": "settings_wifi"
+    }
+  ]
+}

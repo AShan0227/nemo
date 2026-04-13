@@ -1,0 +1,36 @@
+{
+  "records": [
+    {
+      "timestamp_ms": 0,
+      "action": {"type": "launch_app", "params": {"package": "com.taobao.taobao"}, "description": "Launch Taobao", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 2500.0,
+      "attempts": 1,
+      "screen_hash": "taobao_home"
+    },
+    {
+      "timestamp_ms": 3000,
+      "action": {"type": "tap", "params": {"x": 540, "y": 120}, "description": "Tap search bar", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 300.0,
+      "attempts": 1,
+      "screen_hash": "taobao_search"
+    },
+    {
+      "timestamp_ms": 3800,
+      "action": {"type": "type_text", "params": {"text": "iPhone 手机壳"}, "description": "Type search query", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 600.0,
+      "attempts": 1,
+      "screen_hash": "taobao_search_input"
+    },
+    {
+      "timestamp_ms": 4800,
+      "action": {"type": "tap", "params": {"x": 1000, "y": 120}, "description": "Tap search button", "is_reversible": true, "risk_level": 0.0},
+      "success": true,
+      "duration_ms": 300.0,
+      "attempts": 1,
+      "screen_hash": "taobao_search_results"
+    }
+  ]
+}
