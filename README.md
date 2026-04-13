@@ -71,6 +71,9 @@ python -m src.main --scenario wechat_message
 python -m src.main "打开设置" --record-out ./artifacts/actions.json
 python -m src.main --replay ./artifacts/actions.json --replay-speed 2.0
 
+# Run all built-in MVP scenarios and export summary report
+python -m src.main --suite --suite-report ./artifacts/mvp_suite_report.json
+
 # Test
 pytest tests/
 ```

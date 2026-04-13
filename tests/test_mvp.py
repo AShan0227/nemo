@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from src.agent.mvp import evaluate_mvp_result, get_mvp_scenario
+from src.agent.mvp import (
+    evaluate_mvp_result,
+    get_mvp_scenario,
+    list_mvp_scenario_ids,
+    summarize_mvp_reports,
+)
 
 
 def test_get_mvp_scenario_known():
@@ -54,3 +59,22 @@ def test_evaluate_mvp_result_reports_missing_checkpoints():
     report = evaluate_mvp_result(scenario, result)
     assert report["passed"] is False
     assert "home" in report["missing_checkpoints"]
+
+
+def test_list_mvp_scenario_ids_sorted():
+    ids = list_mvp_scenario_ids()
+    assert ids == sorted(ids)
+    assert "wechat_message" in ids
+
+
+def test_summarize_mvp_reports():
+    summary = summarize_mvp_reports(
+        [
+            {"passed": True},
+            {"passed": False},
+            {"passed": True},
+        ]
+    )
+    assert summary["total"] == 3
+    assert summary["passed"] == 2
+    assert summary["failed"] == 1

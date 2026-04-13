@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from argparse import ArgumentParser
+from pathlib import Path
 
 from loguru import logger
 
 from src.agent.agent import PhoneAgent
-from src.agent.mvp import evaluate_mvp_result, get_mvp_scenario
+from src.agent.mvp import (
+    evaluate_mvp_result,
+    get_mvp_scenario,
+    list_mvp_scenario_ids,
+    summarize_mvp_reports,
+)
 from src.config.settings import AgentConfig
 
 
@@ -19,6 +26,8 @@ async def main(
     replay_path: str | None = None,
     replay_speed: float = 1.0,
     record_out: str | None = None,
+    suite: bool = False,
+    suite_report_path: str | None = None,
 ) -> None:
     config = AgentConfig()
     agent = PhoneAgent(config)
@@ -43,6 +52,40 @@ async def main(
                     failure.action_type,
                     failure.error,
                 )
+            return
+
+        if suite:
+            suite_reports: list[dict[str, object]] = []
+            for sid in list_mvp_scenario_ids():
+                scenario_obj = get_mvp_scenario(sid)
+                logger.info("Running scenario [{}] {}", scenario_obj.id, scenario_obj.title)
+                scenario_result = await agent.execute(scenario_obj.task)
+                report = evaluate_mvp_result(scenario_obj, scenario_result)
+                suite_reports.append(report)
+                logger.info(
+                    "  => passed={} status={} missing={}",
+                    report["passed"],
+                    report["status"],
+                    report["missing_checkpoints"],
+                )
+
+            summary = summarize_mvp_reports(suite_reports)
+            logger.info(
+                "Suite summary: total={} passed={} failed={} pass_rate={:.2f}",
+                summary["total"],
+                summary["passed"],
+                summary["failed"],
+                summary["pass_rate"],
+            )
+            if suite_report_path:
+                payload = {"summary": summary, "reports": suite_reports}
+                target = Path(suite_report_path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                logger.info("Saved suite report: {}", target)
             return
 
         result = await agent.execute(task_to_run)
@@ -85,6 +128,12 @@ if __name__ == "__main__":
         dest="scenario_id",
         help="Run built-in MVP scenario (wechat_message|settings_wifi|taobao_search)",
     )
+    parser.add_argument("--suite", action="store_true", help="Run all built-in MVP scenarios")
+    parser.add_argument(
+        "--suite-report",
+        dest="suite_report_path",
+        help="Save MVP suite report JSON (used with --suite)",
+    )
     parser.add_argument("--replay", dest="replay_path", help="Replay recording JSON file")
     parser.add_argument(
         "--replay-speed",
@@ -96,7 +145,7 @@ if __name__ == "__main__":
     parsed = parser.parse_args()
 
     task_text = " ".join(parsed.task).strip()
-    if not parsed.replay_path and not parsed.scenario_id and not task_text:
+    if not parsed.replay_path and not parsed.scenario_id and not parsed.suite and not task_text:
         parser.error("Provide a task, or use --scenario, or --replay")
 
     asyncio.run(
@@ -106,5 +155,7 @@ if __name__ == "__main__":
             replay_path=parsed.replay_path,
             replay_speed=parsed.replay_speed,
             record_out=parsed.record_out,
+            suite=parsed.suite,
+            suite_report_path=parsed.suite_report_path,
         )
     )

@@ -38,6 +38,10 @@ MVP_SCENARIOS: dict[str, MVPScenario] = {
 }
 
 
+def list_mvp_scenario_ids() -> list[str]:
+    return sorted(MVP_SCENARIOS.keys())
+
+
 def get_mvp_scenario(scenario_id: str) -> MVPScenario:
     key = scenario_id.strip().lower()
     if key not in MVP_SCENARIOS:
@@ -75,4 +79,16 @@ def evaluate_mvp_result(
         "missing_checkpoints": missing,
         "total_steps": int(getattr(result, "total_steps", 0)),
         "status": str(status_value),
+    }
+
+
+def summarize_mvp_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(reports)
+    passed = sum(1 for report in reports if bool(report.get("passed")))
+    failed = total - passed
+    return {
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "pass_rate": (passed / total) if total > 0 else 0.0,
     }
