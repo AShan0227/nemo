@@ -72,12 +72,60 @@ class ScreenState:
         """Only elements the user/agent can interact with."""
         return [e for e in self.elements if e.clickable or e.scrollable or e.editable]
 
+    @property
+    def scrollable_elements(self) -> list[UIElement]:
+        """Scrollable containers/regions on current screen."""
+        return [e for e in self.elements if e.scrollable]
+
+    def infer_viewport_hints(self) -> list[str]:
+        """Heuristic hints for likely off-screen content directions."""
+        hints: list[str] = []
+        edge_margin = 24
+        for region in self.scrollable_elements:
+            left, top, right, bottom = region.bounds
+            if right <= left or bottom <= top:
+                continue
+
+            children_in_region = [
+                elem
+                for elem in self.elements
+                if elem is not region and _inside_bounds(elem.bounds, region.bounds)
+            ]
+            if not children_in_region:
+                hints.append(
+                    f"Region [{region.index}] likely has off-screen content below (empty viewport)."
+                )
+                continue
+
+            touches_top = any(
+                abs(elem.bounds[1] - top) <= edge_margin for elem in children_in_region
+            )
+            touches_bottom = any(
+                abs(elem.bounds[3] - bottom) <= edge_margin for elem in children_in_region
+            )
+            if touches_bottom:
+                hints.append(f"Region [{region.index}] likely has more content below.")
+            if touches_top:
+                hints.append(f"Region [{region.index}] may have content above.")
+        return hints
+
     def to_prompt_str(self) -> str:
         """Simplified screen representation for LLM context."""
         lines = [f"Screen: {self.activity}"]
         lines.append(f"Interactive elements ({len(self.interactive_elements)}):")
         for elem in self.interactive_elements:
             lines.append(f"  {elem.to_prompt_str()}")
+        if self.scrollable_elements:
+            lines.append(f"Scrollable regions ({len(self.scrollable_elements)}):")
+            for region in self.scrollable_elements[:3]:
+                lines.append(
+                    f"  [{region.index}] {region.class_name.split('.')[-1]} bounds={region.bounds}"
+                )
+            hints = self.infer_viewport_hints()
+            if hints:
+                lines.append("Viewport hints:")
+                for hint in hints[:4]:
+                    lines.append(f"  - {hint}")
         return "\n".join(lines)
 
 
@@ -106,6 +154,15 @@ def _parse_bounds(bounds_str: str) -> tuple[int, int, int, int]:
         return (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
     except (ValueError, IndexError):
         return (0, 0, 0, 0)
+
+
+def _inside_bounds(inner: tuple[int, int, int, int], outer: tuple[int, int, int, int]) -> bool:
+    return (
+        inner[0] >= outer[0]
+        and inner[1] >= outer[1]
+        and inner[2] <= outer[2]
+        and inner[3] <= outer[3]
+    )
 
 
 def _parse_bool(value: str | None, default: bool = False) -> bool:

@@ -82,3 +82,27 @@ def test_screen_parser_cache_dedup():
     assert not dedup_a
     assert dedup_b
     assert state_a is state_b
+
+
+def test_detect_scrollable_regions_and_viewport_hints():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0">
+  <node index="0" class="android.widget.ScrollView" scrollable="true"
+        clickable="false" bounds="[0,100][1080,1800]">
+    <node index="1" class="android.widget.TextView" text="Top item"
+          clickable="true" bounds="[10,100][400,160]" />
+    <node index="2" class="android.widget.TextView" text="Bottom item"
+          clickable="true" bounds="[10,1740][500,1800]" />
+  </node>
+</hierarchy>"""
+    state = parse_ui_hierarchy(xml)
+    scrollables = state.scrollable_elements
+    assert len(scrollables) == 1
+
+    hints = state.infer_viewport_hints()
+    assert any("below" in hint for hint in hints)
+    assert any("above" in hint for hint in hints)
+
+    prompt = state.to_prompt_str()
+    assert "Scrollable regions" in prompt
+    assert "Viewport hints" in prompt
