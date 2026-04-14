@@ -31,7 +31,7 @@ object Strings {
     val continueText get() = if (isChinese) "继续" else "Continue"
 
     val step2Title get() = if (isChinese) "下载 AI 模型" else "Download AI Model"
-    val step2Downloading get() = if (isChinese) "正在下载 Gemma 模型 (529MB)，仅需一次。" else "Downloading Gemma model (529MB). This only happens once."
+    val step2Downloading get() = if (isChinese) "正在下载 AI 模型 (~700MB)，仅需一次。" else "Downloading AI model (~700MB). This only happens once."
     val step2Done get() = if (isChinese) "模型已就绪！所有推理在手机本地运行。" else "Model ready! All inference runs locally on your device."
     val step2ModelReady get() = if (isChinese) "模型已下载" else "Model downloaded"
     val step2Failed get() = if (isChinese) "下载失败" else "Download failed"

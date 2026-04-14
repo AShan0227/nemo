@@ -151,7 +151,7 @@ class ModelManager(private val context: Context) {
     }
 
     companion object {
-        private const val DEFAULT_MODEL_FILE_NAME = "gemma3-1b-it-int4.task"
-        const val DEFAULT_MODEL_URL = "https://github.com/AShan0227/nemo/releases/download/model-v1/gemma3-1b-it-int4.task"
+        private const val DEFAULT_MODEL_FILE_NAME = "gemma-3-1b-it-Q4_0.gguf"
+        const val DEFAULT_MODEL_URL = "https://github.com/AShan0227/nemo/releases/download/model-v1/gemma-3-1b-it-Q4_0.gguf"
     }
 }

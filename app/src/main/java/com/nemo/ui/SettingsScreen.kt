@@ -89,7 +89,7 @@ fun SettingsScreen(
 
     var downloadUrl by remember {
         mutableStateOf(
-            "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
+            com.nemo.model.ModelManager.DEFAULT_MODEL_URL,
         )
     }
     var expectedSha256 by remember { mutableStateOf("") }
