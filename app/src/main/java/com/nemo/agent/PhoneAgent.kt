@@ -8,6 +8,7 @@ import com.nemo.model.PromptTemplates
 import com.nemo.model.ReasoningDepth
 import com.nemo.model.RoutingDecision
 import com.nemo.research.*
+import com.nemo.safety.PrivacyGuard
 import com.nemo.safety.SafetyContext
 import com.nemo.safety.SafetyLayer
 import com.nemo.safety.Verdict
@@ -114,8 +115,23 @@ class PhoneAgent(
             stepCount += 1
             val startTime = System.currentTimeMillis()
 
-            // 1. Observe
-            val screen = svc.getScreenState()
+            // 1. Observe (with crash recovery)
+            val rawScreen = try {
+                svc.getScreenState()
+            } catch (e: Exception) {
+                val record = StepRecord(stepCount, "error", error = "Screen read failed: ${e.message}")
+                steps += record; onStep?.invoke(record)
+                successWindow.add(false)
+                delay(1000)
+                continue
+            }
+            val screen = PrivacyGuard.filterForPrompt(rawScreen)
+            if (screen.elements.isEmpty()) {
+                val record = StepRecord(stepCount, "wait", reasoning = "Empty screen, waiting...", success = true)
+                steps += record; onStep?.invoke(record)
+                delay(1000)
+                continue
+            }
             val screenHash = screen.computeHash()
             val screenContext = screen.toPromptStr()
 

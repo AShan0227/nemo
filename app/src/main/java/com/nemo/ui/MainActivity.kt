@@ -121,10 +121,12 @@ fun MainScreen(
     onOpenAccessibilitySettings: () -> Unit,
 ) {
     val app = NemoApp.instance
+    val context = androidx.compose.ui.platform.LocalContext.current
     var taskInput by remember { mutableStateOf("") }
     var isRunning by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("Ready") }
     var steps by remember { mutableStateOf(listOf<StepRecord>()) }
+    var lastResult by remember { mutableStateOf<com.nemo.agent.TaskResult?>(null) }
     val scope = rememberCoroutineScope()
     val isServiceConnected = NemoAccessibilityService.instance != null
 
@@ -176,6 +178,7 @@ fun MainScreen(
                         )
                         agent.initPersistence(app)
                         val result = agent.execute(taskInput) { step -> steps = steps + step }
+                        lastResult = result
                         statusText = "${result.status.name}: ${result.summary} (${result.totalSteps} steps)"
                     } catch (e: Exception) {
                         statusText = "Error: ${e.message}"
@@ -207,6 +210,24 @@ fun MainScreen(
                         if (step.reasoning.isNotBlank()) Text(step.reasoning, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                         if (step.error.isNotBlank()) Text(step.error, style = MaterialTheme.typography.bodySmall, color = Color.Red)
                     }
+                }
+            }
+        }
+
+        // Share button after task completes
+        lastResult?.let { result ->
+            if (!isRunning && result.totalSteps > 0) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            val file = ShareGenerator.generateTaskCard(context, taskInput, result)
+                            ShareGenerator.shareImage(context, file, taskInput)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Share Result")
                 }
             }
         }
