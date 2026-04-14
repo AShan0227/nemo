@@ -150,7 +150,11 @@ fun MainScreen(
                 statusText = "Running..."
 
                 scope.launch {
-                    val llm = OnDeviceLLM(context, settings.modelPath)
+                    val llm = OnDeviceLLM(
+                        context = context,
+                        modelPath = settings.modelPath,
+                        runtimeConfig = settings.toLlmRuntimeConfig(),
+                    )
                     try {
                         llm.load()
                         val agent = PhoneAgent(
@@ -158,6 +162,12 @@ fun MainScreen(
                             maxSteps = settings.maxSteps,
                             actionDelayMs = settings.actionDelayMs,
                             safetyEnabled = settings.safetyEnabled,
+                            homeostasisEnabled = settings.homeostasisEnabled,
+                            immuneEnabled = settings.immuneEnabled,
+                            inertiaEnabled = settings.inertiaEnabled,
+                            explorerEnabled = settings.explorerEnabled,
+                            circadianEnabled = settings.circadianEnabled,
+                            contextWindowSteps = settings.contextWindowSteps,
                         )
                         val result = agent.execute(taskInput) { step ->
                             steps = steps + step

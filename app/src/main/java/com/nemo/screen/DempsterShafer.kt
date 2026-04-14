@@ -116,7 +116,7 @@ private fun clamp(value: Double, low: Double, high: Double) = max(low, min(high,
  * Generate candidates from UI hierarchy elements.
  */
 fun candidatesFromUi(
-    elements: List<ScreenReader.UIElement>,
+    elements: List<UIElement>,
     interactiveOnly: Boolean = true
 ): List<SignalCandidate> {
     return elements.mapNotNull { elem ->
@@ -138,7 +138,7 @@ fun candidatesFromUi(
             label = label,
             confidence = confidence,
             source = "ui",
-            bounds = elem.bounds
+            bounds = intArrayOf(elem.bounds.left, elem.bounds.top, elem.bounds.right, elem.bounds.bottom),
         )
     }
 }
