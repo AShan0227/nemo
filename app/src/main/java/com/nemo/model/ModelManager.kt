@@ -35,6 +35,7 @@ class ModelManager(private val context: Context) {
         url: String,
         targetPath: String,
         expectedSha256: String? = null,
+        authToken: String? = null,
         onProgress: (DownloadProgress) -> Unit = {},
     ): Result<File> = withContext(Dispatchers.IO) {
         runCatching {
@@ -79,6 +80,10 @@ class ModelManager(private val context: Context) {
                 connectTimeout = 30_000
                 readTimeout = 30_000
                 doInput = true
+                instanceFollowRedirects = true
+                if (!authToken.isNullOrBlank()) {
+                    setRequestProperty("Authorization", "Bearer $authToken")
+                }
             }
 
             connection.connect()

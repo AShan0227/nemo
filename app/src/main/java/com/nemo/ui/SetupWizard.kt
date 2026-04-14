@@ -1,5 +1,9 @@
 package com.nemo.ui
 
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -17,12 +21,6 @@ import com.nemo.service.NemoAccessibilityService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * 3-step first-launch wizard:
- * 1. Enable Accessibility Service
- * 2. Download AI model (auto-start)
- * 3. Try a demo task
- */
 @Composable
 fun SetupWizard(
     onOpenAccessibilitySettings: () -> Unit,
@@ -33,7 +31,6 @@ fun SetupWizard(
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Progress indicator
         LinearProgressIndicator(
             progress = { (pagerState.currentPage + 1) / 3f },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -62,13 +59,8 @@ fun SetupWizard(
 }
 
 @Composable
-private fun StepAccessibility(
-    onOpenSettings: () -> Unit,
-    onNext: () -> Unit,
-) {
+private fun StepAccessibility(onOpenSettings: () -> Unit, onNext: () -> Unit) {
     var isEnabled by remember { mutableStateOf(false) }
-
-    // Poll for accessibility service status every 2 seconds
     LaunchedEffect(Unit) {
         while (true) {
             isEnabled = NemoAccessibilityService.instance != null
@@ -77,11 +69,7 @@ private fun StepAccessibility(
         }
     }
 
-    WizardPage(
-        step = 1,
-        title = Strings.step1Title,
-        description = Strings.step1Desc,
-    ) {
+    WizardPage(step = 1, title = Strings.step1Title, description = Strings.step1Desc) {
         if (isEnabled) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -90,35 +78,20 @@ private fun StepAccessibility(
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
-                Text(Strings.continueText)
-            }
+            Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) { Text(Strings.continueText) }
         } else {
             val steps = if (Strings.isChinese) listOf(
-                "1. 点击下面的按钮",
-                "2. 在列表中找到 'Nemo Agent' 或 'Nemo 智能助手'",
-                "3. 打开开关并确认",
-                "4. 返回这里 — 我们会自动检测",
+                "1. 点击下面的按钮", "2. 在列表中找到 'Nemo Agent'",
+                "3. 打开开关并确认", "4. 返回这里 — 自动检测",
             ) else listOf(
-                "1. Tap the button below",
-                "2. Find 'Nemo Agent' in the list",
-                "3. Toggle ON and confirm",
-                "4. Come back here — we'll detect it automatically",
+                "1. Tap the button below", "2. Find 'Nemo Agent' in the list",
+                "3. Toggle ON and confirm", "4. Come back here — auto-detected",
             )
-            steps.forEach {
-                Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 2.dp))
-            }
+            steps.forEach { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 2.dp)) }
             Spacer(Modifier.height(16.dp))
-            Button(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
-                Text(Strings.step1Button)
-            }
+            Button(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) { Text(Strings.step1Button) }
             Spacer(Modifier.height(8.dp))
-            Text(
-                Strings.step1Waiting,
-                style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Text(Strings.step1Waiting, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -132,26 +105,26 @@ private fun StepModelDownload(onNext: () -> Unit) {
     var progress by remember { mutableStateOf<DownloadProgress?>(null) }
     var isDone by remember { mutableStateOf(modelManager.isModelDownloaded(defaultPath)) }
     var error by remember { mutableStateOf<String?>(null) }
+    var hfToken by remember { mutableStateOf("") }
+    var showTokenInput by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // Auto-start download if model not present
+    // Re-check if model exists (user might have placed it manually)
     LaunchedEffect(Unit) {
-        if (isDone) return@LaunchedEffect
-        val result = modelManager.downloadModel(
-            url = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
-            targetPath = defaultPath,
-            onProgress = { progress = it },
-        )
-        result.fold(
-            onSuccess = { isDone = true },
-            onFailure = { error = it.message },
-        )
+        while (!isDone) {
+            isDone = modelManager.isModelDownloaded(defaultPath)
+            delay(3000)
+        }
     }
+
+    val modelUrl = ModelManager.DEFAULT_MODEL_URL
 
     WizardPage(
         step = 2,
         title = Strings.step2Title,
-        description = if (isDone) Strings.step2Done else Strings.step2Downloading,
+        description = if (isDone) Strings.step2Done else if (Strings.isChinese)
+            "需要下载 Gemma AI 模型 (529MB)。\n由于 Google 许可政策，需要 HuggingFace 账号。"
+        else "Need to download Gemma AI model (529MB).\nRequires HuggingFace account due to Google license.",
     ) {
         if (isDone) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
@@ -161,74 +134,115 @@ private fun StepModelDownload(onNext: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
-                Text("Continue")
-            }
+            Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) { Text(Strings.continueText) }
         } else {
-            progress?.let { p ->
-                LinearProgressIndicator(
-                    progress = { p.percent / 100f },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                Text("${p.percent}% — ${p.downloadedBytes / 1_000_000}MB downloaded")
-            }
-            error?.let { e ->
-                Spacer(Modifier.height(8.dp))
-                Text("Download failed: $e", color = MaterialTheme.colorScheme.error)
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = {
-                    error = null
-                    scope.launch {
-                        val result = modelManager.downloadModel(
-                            url = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
-                            targetPath = defaultPath,
-                            onProgress = { progress = it },
+            // Option 1: Download with HuggingFace Token
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        if (Strings.isChinese) "方式一：用 HuggingFace Token 下载" else "Option 1: Download with HF Token",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+
+                    if (!showTokenInput) {
+                        Button(onClick = { showTokenInput = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (Strings.isChinese) "输入 HuggingFace Token" else "Enter HuggingFace Token")
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = hfToken,
+                            onValueChange = { hfToken = it },
+                            label = { Text("HuggingFace Token (hf_...)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
                         )
-                        result.fold(
-                            onSuccess = { isDone = true },
-                            onFailure = { error = it.message },
-                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                error = null
+                                scope.launch {
+                                    val result = modelManager.downloadModel(
+                                        url = modelUrl,
+                                        targetPath = defaultPath,
+                                        authToken = hfToken.trim(),
+                                        onProgress = { progress = it },
+                                    )
+                                    result.fold(
+                                        onSuccess = { isDone = true },
+                                        onFailure = { error = it.message },
+                                    )
+                                }
+                            },
+                            enabled = hfToken.startsWith("hf_"),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (Strings.isChinese) "开始下载" else "Start Download")
+                        }
                     }
-                }) {
-                    Text("Retry")
+
+                    progress?.let { p ->
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(progress = { p.percent / 100f }, modifier = Modifier.fillMaxWidth())
+                        Text("${p.percent}% — ${p.downloadedBytes / 1_000_000}MB")
+                    }
+
+                    error?.let { e ->
+                        Spacer(Modifier.height(8.dp))
+                        Text("${Strings.step2Failed}: $e", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Option 2: Manual instructions
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        if (Strings.isChinese) "方式二：手动下载" else "Option 2: Manual Download",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    val steps = if (Strings.isChinese) listOf(
+                        "1. 在电脑上打开 huggingface.co 注册/登录",
+                        "2. 搜索 \"Gemma3-1B-IT\" 并同意许可",
+                        "3. 下载 gemma3-1b-it-int4.task (529MB)",
+                        "4. 通过 USB 传到手机此路径：",
+                    ) else listOf(
+                        "1. Open huggingface.co on computer, sign up/login",
+                        "2. Search \"Gemma3-1B-IT\", accept license",
+                        "3. Download gemma3-1b-it-int4.task (529MB)",
+                        "4. Transfer to phone at this path:",
+                    )
+                    steps.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    Spacer(Modifier.height(4.dp))
+                    Text(defaultPath, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Skip option (use Sandbox demo instead)
+            OutlinedButton(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
+                Text(if (Strings.isChinese) "跳过（先用演示模式）" else "Skip (use Demo mode first)")
+            }
         }
     }
 }
 
 @Composable
-private fun StepTryDemo(
-    onRunDemo: () -> Unit,
-    onComplete: () -> Unit,
-) {
-    WizardPage(
-        step = 3,
-        title = "Ready to Go!",
-        description = "Nemo is set up. Try a quick demo or start using the app.",
-    ) {
-        Button(onClick = onRunDemo, modifier = Modifier.fillMaxWidth()) {
-            Text("Try Demo: \"Open Settings\"")
-        }
+private fun StepTryDemo(onRunDemo: () -> Unit, onComplete: () -> Unit) {
+    WizardPage(step = 3, title = Strings.step3Title, description = Strings.step3Desc) {
+        Button(onClick = onRunDemo, modifier = Modifier.fillMaxWidth()) { Text(Strings.tryDemo) }
         Spacer(Modifier.height(12.dp))
-        OutlinedButton(onClick = onComplete, modifier = Modifier.fillMaxWidth()) {
-            Text("Skip to App")
-        }
+        OutlinedButton(onClick = onComplete, modifier = Modifier.fillMaxWidth()) { Text(Strings.skipToApp) }
     }
 }
 
 @Composable
-private fun WizardPage(
-    step: Int,
-    title: String,
-    description: String,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-    ) {
+private fun WizardPage(step: Int, title: String, description: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
         Text("Step $step of 3", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(8.dp))
         Text(title, style = MaterialTheme.typography.headlineMedium)
