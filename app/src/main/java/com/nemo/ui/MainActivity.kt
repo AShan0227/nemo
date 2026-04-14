@@ -5,31 +5,52 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import com.nemo.agent.PhoneAgent
 import com.nemo.agent.StepRecord
-import com.nemo.agent.TaskStatus
+import com.nemo.model.ModelManager
 import com.nemo.model.OnDeviceLLM
 import com.nemo.service.NemoAccessibilityService
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                MainScreen(
+                AppNavRoot(
                     onOpenAccessibilitySettings = {
                         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                    }
+                    },
                 )
             }
         }
@@ -37,7 +58,38 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainScreen(onOpenAccessibilitySettings: () -> Unit) {
+private fun AppNavRoot(onOpenAccessibilitySettings: () -> Unit) {
+    val navController = rememberNavController()
+    val initial = defaultSettings()
+    var settings by remember { mutableStateOf(initial) }
+
+    NavHost(navController = navController, startDestination = "main") {
+        composable("main") {
+            MainScreen(
+                settings = settings,
+                onSettingsClick = { navController.navigate("settings") },
+                onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+            )
+        }
+        composable("settings") {
+            SettingsScreen(
+                settings = settings,
+                onSettingsChange = { settings = it },
+                onBack = { navController.popBackStack() },
+            )
+        }
+    }
+}
+
+@Composable
+fun MainScreen(
+    settings: AppSettings,
+    onSettingsClick: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+) {
+    val context = LocalContext.current
+    val modelManager = remember(context) { ModelManager(context) }
+
     var taskInput by remember { mutableStateOf("") }
     var isRunning by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("Ready") }
@@ -47,63 +99,76 @@ fun MainScreen(onOpenAccessibilitySettings: () -> Unit) {
     val isServiceConnected = NemoAccessibilityService.instance != null
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
     ) {
-        // Header
         Text("Nemo Agent", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(8.dp))
+        TextButton(onClick = onSettingsClick) { Text("Open Settings") }
+        Spacer(Modifier.height(8.dp))
 
-        // Service status
         if (!isServiceConnected) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Accessibility Service not enabled")
                     Spacer(Modifier.height(8.dp))
                     Button(onClick = onOpenAccessibilitySettings) {
-                        Text("Open Settings")
+                        Text("Open Accessibility Settings")
                     }
                 }
             }
             Spacer(Modifier.height(16.dp))
         }
 
-        // Task input
         OutlinedTextField(
             value = taskInput,
             onValueChange = { taskInput = it },
             label = { Text("Task") },
-            placeholder = { Text("e.g. Open WeChat and send hello to John") },
+            placeholder = { Text("e.g. Open WeChat and send hello") },
             modifier = Modifier.fillMaxWidth(),
             enabled = !isRunning,
         )
+
         Spacer(Modifier.height(12.dp))
 
-        // Execute button
         Button(
             onClick = {
-                if (taskInput.isNotBlank() && isServiceConnected) {
-                    isRunning = true
-                    steps = emptyList()
-                    statusText = "Running..."
-                    scope.launch {
-                        // TODO: initialize LLM with actual model path
-                        val llm = OnDeviceLLM("/data/local/tmp/gemma-1b-q4.bin")
-                        try {
-                            llm.load()
-                            val agent = PhoneAgent(llm)
-                            val result = agent.execute(taskInput) { step ->
-                                steps = steps + step
-                            }
-                            statusText = "${result.status.name}: ${result.summary} (${result.totalSteps} steps)"
-                        } catch (e: Exception) {
-                            statusText = "Error: ${e.message}"
-                        } finally {
-                            llm.close()
-                            isRunning = false
+                if (taskInput.isBlank() || !isServiceConnected) return@Button
+                if (!modelManager.isModelDownloaded(settings.modelPath)) {
+                    statusText = "Model not found. Please download it in Settings."
+                    return@Button
+                }
+
+                isRunning = true
+                steps = emptyList()
+                statusText = "Running..."
+
+                scope.launch {
+                    val llm = OnDeviceLLM(context, settings.modelPath)
+                    try {
+                        llm.load()
+                        val agent = PhoneAgent(
+                            llm = llm,
+                            maxSteps = settings.maxSteps,
+                            actionDelayMs = settings.actionDelayMs,
+                            safetyEnabled = settings.safetyEnabled,
+                        )
+                        val result = agent.execute(taskInput) { step ->
+                            steps = steps + step
                         }
+                        statusText =
+                            "${result.status.name}: ${result.summary} (${result.totalSteps} steps)"
+                    } catch (e: Exception) {
+                        statusText = "Error: ${e.message}"
+                    } finally {
+                        llm.close()
+                        isRunning = false
                     }
                 }
             },
@@ -112,14 +177,16 @@ fun MainScreen(onOpenAccessibilitySettings: () -> Unit) {
         ) {
             Text(if (isRunning) "Running..." else "Execute Task")
         }
-        Spacer(Modifier.height(12.dp))
 
-        // Status
+        Spacer(Modifier.height(12.dp))
         Text(statusText, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(12.dp))
 
-        // Step log
-        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+        ) {
             items(steps) { step ->
                 StepCard(step)
             }
@@ -132,7 +199,9 @@ fun StepCard(step: StepRecord) {
     val bgColor = if (step.success) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
     Card(
         colors = CardDefaults.cardColors(containerColor = bgColor),
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
     ) {
         Column(Modifier.padding(12.dp)) {
             Text(
@@ -140,10 +209,18 @@ fun StepCard(step: StepRecord) {
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (step.reasoning.isNotBlank()) {
-                Text(step.reasoning, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(
+                    step.reasoning,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
             }
             if (step.error.isNotBlank()) {
-                Text(step.error, style = MaterialTheme.typography.bodySmall, color = Color.Red)
+                Text(
+                    step.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Red,
+                )
             }
         }
     }

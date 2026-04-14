@@ -4,7 +4,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.nemo.screen.ScreenState
 import com.nemo.service.NemoAccessibilityService
 import kotlinx.coroutines.delay
-import org.json.JSONObject
+import kotlinx.serialization.json.*
 
 /**
  * Action builder and executor.
@@ -27,6 +27,7 @@ data class BuiltAction(
 )
 
 class ActionBuilder {
+    private val json = Json { ignoreUnknownKeys = true }
 
     data class Decision(
         val reasoning: String,
@@ -40,10 +41,10 @@ class ActionBuilder {
         if (start < 0 || end <= start) {
             throw IllegalArgumentException("No JSON found in: ${raw.take(200)}")
         }
-        val json = JSONObject(raw.substring(start, end))
-        val reasoning = json.optString("reasoning", "")
-        val action = json.optString("action", "")
-        val params = parseParams(json.optJSONObject("params"))
+        val jsonObject = json.parseToJsonElement(raw.substring(start, end)).jsonObject
+        val reasoning = jsonObject["reasoning"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val action = jsonObject["action"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val params = parseParams(jsonObject["params"]?.jsonObject)
         return Decision(reasoning = reasoning, actionName = action, params = params)
     }
 
@@ -170,15 +171,26 @@ class ActionBuilder {
         }
     }
 
-    private fun parseParams(json: JSONObject?): Map<String, Any> {
-        if (json == null) return emptyMap()
-        val map = linkedMapOf<String, Any>()
-        val keys = json.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            map[key] = json.get(key)
+    private fun parseParams(jsonObject: JsonObject?): Map<String, Any> {
+        if (jsonObject == null) return emptyMap()
+        return jsonObject.mapValues { (_, value) -> value.toAny() }
+    }
+
+    private fun JsonElement.toAny(): Any {
+        return when (this) {
+            is JsonObject -> this.mapValues { (_, value) -> value.toAny() }
+            is JsonArray -> this.map { element -> element.toAny() }
+            is JsonNull -> ""
+            is JsonPrimitive -> {
+                when {
+                    isString -> content
+                    booleanOrNull != null -> boolean
+                    longOrNull != null -> long
+                    doubleOrNull != null -> double
+                    else -> content
+                }
+            }
         }
-        return map
     }
 
     private fun findEditableNodes(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {

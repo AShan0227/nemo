@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="nemo_primary">#0A7CFF</color>
+    <color name="nemo_primary_dark">#005BC2</color>
+    <color name="nemo_splash_bg">#EAF3FF</color>
+    <color name="nemo_icon_bg">#D7E8FF</color>
+</resources>
