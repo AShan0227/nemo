@@ -89,7 +89,7 @@ fun SettingsScreen(
 
     var downloadUrl by remember {
         mutableStateOf(
-            "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-q4.bin",
+            "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
         )
     }
     var expectedSha256 by remember { mutableStateOf("") }
@@ -104,17 +104,31 @@ fun SettingsScreen(
             .padding(16.dp),
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Settings", style = MaterialTheme.typography.headlineMedium)
-            TextButton(onClick = onBack) { Text("Back") }
+            Text(Strings.settings, style = MaterialTheme.typography.headlineMedium)
+            TextButton(onClick = onBack) { Text(Strings.back) }
         }
 
         Spacer(Modifier.height(12.dp))
 
         LazyColumn(modifier = Modifier.fillMaxSize()) {
+            // Language toggle
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(Strings.language, style = MaterialTheme.typography.titleMedium)
+                        Button(onClick = {
+                            Strings.isChinese = !Strings.isChinese
+                        }) {
+                            Text(Strings.switchToChinese)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp)) {
-                        Text("Model", style = MaterialTheme.typography.titleMedium)
+                        Text(Strings.model, style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
                             value = settings.modelPath,

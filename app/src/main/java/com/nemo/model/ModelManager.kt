@@ -146,6 +146,7 @@ class ModelManager(private val context: Context) {
     }
 
     companion object {
-        private const val DEFAULT_MODEL_FILE_NAME = "gemma-3n-E2B-it-q4.bin"
+        private const val DEFAULT_MODEL_FILE_NAME = "gemma3-1b-it-int4.task"
+        const val DEFAULT_MODEL_URL = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task"
     }
 }

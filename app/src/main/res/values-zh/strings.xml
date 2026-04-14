@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nemo 智能助手</string>
+    <string name="accessibility_description">Nemo 读取屏幕内容并执行点击、滑动操作来完成你的任务。\n\n隐私：所有 AI 推理在手机端完成，屏幕内容永远不会发送到任何服务器。密码、支付信息等敏感字段会自动过滤。\n\n安全：金融交易、权限授予、删除操作会自动拦截。</string>
+</resources>

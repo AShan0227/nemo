@@ -79,22 +79,27 @@ private fun StepAccessibility(
 
     WizardPage(
         step = 1,
-        title = "Enable Screen Access",
-        description = "Nemo needs permission to read your screen and perform actions.\nAll processing happens on-device. Your data never leaves your phone.",
+        title = Strings.step1Title,
+        description = Strings.step1Desc,
     ) {
         if (isEnabled) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Service enabled", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                    Text("Ready", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    Text(Strings.step1ServiceEnabled, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Text(Strings.step1Ready, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 }
             }
             Spacer(Modifier.height(16.dp))
             Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
-                Text("Continue")
+                Text(Strings.continueText)
             }
         } else {
-            val steps = listOf(
+            val steps = if (Strings.isChinese) listOf(
+                "1. 点击下面的按钮",
+                "2. 在列表中找到 'Nemo Agent' 或 'Nemo 智能助手'",
+                "3. 打开开关并确认",
+                "4. 返回这里 — 我们会自动检测",
+            ) else listOf(
                 "1. Tap the button below",
                 "2. Find 'Nemo Agent' in the list",
                 "3. Toggle ON and confirm",
@@ -105,11 +110,11 @@ private fun StepAccessibility(
             }
             Spacer(Modifier.height(16.dp))
             Button(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
-                Text("Open Accessibility Settings")
+                Text(Strings.step1Button)
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "Waiting for permission...",
+                Strings.step1Waiting,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
@@ -133,7 +138,7 @@ private fun StepModelDownload(onNext: () -> Unit) {
     LaunchedEffect(Unit) {
         if (isDone) return@LaunchedEffect
         val result = modelManager.downloadModel(
-            url = "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-q4.bin",
+            url = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
             targetPath = defaultPath,
             onProgress = { progress = it },
         )
@@ -145,14 +150,14 @@ private fun StepModelDownload(onNext: () -> Unit) {
 
     WizardPage(
         step = 2,
-        title = "Download AI Model",
-        description = if (isDone) "Model ready! All inference runs locally on your device." else "Downloading Gemma 1B (529MB). This only happens once.",
+        title = Strings.step2Title,
+        description = if (isDone) Strings.step2Done else Strings.step2Downloading,
     ) {
         if (isDone) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Model downloaded", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                    Text("Ready", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    Text(Strings.step2ModelReady, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Text(Strings.step1Ready, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -176,7 +181,7 @@ private fun StepModelDownload(onNext: () -> Unit) {
                     error = null
                     scope.launch {
                         val result = modelManager.downloadModel(
-                            url = "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-q4.bin",
+                            url = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
                             targetPath = defaultPath,
                             onProgress = { progress = it },
                         )
