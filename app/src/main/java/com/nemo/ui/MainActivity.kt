@@ -85,6 +85,8 @@ private fun AppNavRoot(onOpenAccessibilitySettings: () -> Unit) {
             MainScreen(
                 settings = settings,
                 onSettingsClick = { navController.navigate("settings") },
+                onSandboxClick = { navController.navigate("sandbox") },
+                onPrivacyClick = { navController.navigate("privacy") },
                 onOpenAccessibilitySettings = onOpenAccessibilitySettings,
             )
         }
@@ -98,6 +100,15 @@ private fun AppNavRoot(onOpenAccessibilitySettings: () -> Unit) {
                 onBack = { navController.popBackStack() },
             )
         }
+        composable("sandbox") {
+            SandboxDemoScreen(onBack = { navController.popBackStack() })
+        }
+        composable("privacy") {
+            PrivacyDashboard(
+                stats = PrivacyStats(),
+                onBack = { navController.popBackStack() },
+            )
+        }
     }
 }
 
@@ -105,6 +116,8 @@ private fun AppNavRoot(onOpenAccessibilitySettings: () -> Unit) {
 fun MainScreen(
     settings: AppSettings,
     onSettingsClick: () -> Unit,
+    onSandboxClick: () -> Unit = {},
+    onPrivacyClick: () -> Unit = {},
     onOpenAccessibilitySettings: () -> Unit,
 ) {
     val app = NemoApp.instance
@@ -118,7 +131,11 @@ fun MainScreen(
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Nemo Agent", style = MaterialTheme.typography.headlineMedium)
-            TextButton(onClick = onSettingsClick) { Text("Settings") }
+            Row {
+                TextButton(onClick = onSandboxClick) { Text("Demo") }
+                TextButton(onClick = onPrivacyClick) { Text("Privacy") }
+                TextButton(onClick = onSettingsClick) { Text("Settings") }
+            }
         }
         Spacer(Modifier.height(8.dp))
 
