@@ -1,5 +1,6 @@
 package com.nemo.model
 
+import android.content.Context
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,7 +16,10 @@ data class LLMDecisionResult(
     val entropySource: String = "none",
 )
 
-class OnDeviceLLM(private val modelPath: String) {
+class OnDeviceLLM(
+    private val context: Context,
+    private val modelPath: String,
+) {
 
     private var inference: LlmInference? = null
     private var loaded = false
@@ -27,11 +31,9 @@ class OnDeviceLLM(private val modelPath: String) {
         val options = LlmInference.LlmInferenceOptions.builder()
             .setModelPath(modelPath)
             .setMaxTokens(1024)
-            .setTemperature(0.3f)
-            .setTopK(40)
-            .setTopP(0.95f)
+            .setMaxTopK(40)
             .build()
-        inference = LlmInference.createFromOptions(options)
+        inference = LlmInference.createFromOptions(context, options)
         loaded = true
     }
 

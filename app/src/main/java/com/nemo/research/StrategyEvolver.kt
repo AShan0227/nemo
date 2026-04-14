@@ -1,6 +1,9 @@
 package com.nemo.research
 
+import kotlin.math.cos
+import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
@@ -18,7 +21,7 @@ data class StrategyGenome(
     fun mutate(rate: Float = 0.1f, strength: Float = 0.2f) {
         for (key in genes.keys.toList()) {
             if (Random.nextFloat() < rate) {
-                val delta = genes[key]!! * strength * Random.nextGaussian().toFloat()
+                val delta = genes[key]!! * strength * nextGaussian()
                 genes[key] = max(0.01f, genes[key]!! + delta)
             }
         }
@@ -37,6 +40,15 @@ data class StrategyGenome(
         fun random(): StrategyGenome = default().also { g ->
             g.genes.keys.toList().forEach { k -> g.genes[k] = g.genes[k]!! * Random.nextFloat() * 1.7f + 0.3f }
         }
+    }
+
+    private fun nextGaussian(): Float {
+        // Box-Muller transform
+        val u1 = Random.nextFloat().coerceAtLeast(1e-7f)
+        val u2 = Random.nextFloat().coerceAtLeast(1e-7f)
+        val r = sqrt(-2f * ln(u1))
+        val theta = (2.0 * Math.PI * u2).toFloat()
+        return r * cos(theta)
     }
 }
 
