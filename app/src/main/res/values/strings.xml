@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nemo Agent</string>
+    <string name="accessibility_description">Nemo reads screen content and performs actions to complete your tasks. On-device AI, private and offline.</string>
+</resources>
