@@ -2,6 +2,7 @@ package com.nemo.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Bundle
@@ -93,6 +94,18 @@ class NemoAccessibilityService : AccessibilityService() {
     fun pressHome(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
     fun openRecents(): Boolean = performGlobalAction(GLOBAL_ACTION_RECENTS)
     fun openNotifications(): Boolean = performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+
+    fun launchApp(packageName: String): Boolean {
+        if (packageName.isBlank()) return false
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: return false
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            startActivity(launchIntent)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     fun getScreenSize(): Pair<Int, Int> {
         val dm = resources.displayMetrics
