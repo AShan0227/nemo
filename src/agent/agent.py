@@ -42,6 +42,7 @@ from src.research.explorer import BoltzmannExplorer
 from src.research.genome import Codon, Gene, Opcode, Workflow
 from src.research.homeostasis import HomeostasisRegulator
 from src.research.immune import ImmuneSystem, extract_features
+from src.research.intent_tracker import IntentTracker
 from src.research.inertia import InertiaController
 from src.research.phase_detector import PerformanceSnapshot, PhaseDetector
 from src.safety.invariants import SafetyLayer, Verdict
@@ -142,6 +143,7 @@ class PhoneAgent:
         plan_cursor = 0
         self.action_recorder.clear()
         self.action_timing = ActionTimingTracker()
+        intent_tracker: IntentTracker | None = None
 
         while self._step_count < self.config.max_steps:
             self._step_count += 1
@@ -151,6 +153,16 @@ class PhoneAgent:
             # 1. Observe
             screen = await self._observe()
             screen_hash = ScreenGraph.compute_screen_hash(screen.raw_xml)
+
+            # 1b. Intent tracking — refine ambiguous task via screen evidence
+            if intent_tracker is not None:
+                intent_tracker.update_evidence(screen.to_prompt_str())
+                if intent_tracker.is_collapsed:
+                    resolved = intent_tracker.get_best_intent()
+                    if resolved != task:
+                        logger.info(f"Intent resolved: '{task}' -> '{resolved}'")
+                        task = resolved
+                        intent_tracker = None  # done tracking
 
             if screen_hash not in self.graph._nodes:
                 self.graph.add_node(ScreenNode(
