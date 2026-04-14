@@ -18,8 +18,10 @@ import com.nemo.research.InertiaController
 import com.nemo.research.IntentTracker
 import com.nemo.research.PerformanceSnapshot
 import com.nemo.research.PhaseDetector
+import com.nemo.screen.SignalCandidate
 import com.nemo.screen.ScreenState
 import com.nemo.screen.UIElement
+import com.nemo.screen.fuseScreenSources
 import java.util.Calendar
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -271,5 +273,15 @@ class ResearchTest {
             ),
         )
         assertNotNull(transition)
+    }
+
+    @Test
+    fun dempster_fusion_prefers_sharedEvidence() {
+        val ui = listOf(SignalCandidate(label = "Wi-Fi", confidence = 0.9, source = "ui"))
+        val ocr = listOf(SignalCandidate(label = "Wi-Fi", confidence = 0.8, source = "ocr"))
+        val result = fuseScreenSources(uiCandidates = ui, ocrCandidates = ocr)
+
+        assertEquals("wi-fi", result.bestLabel)
+        assertTrue(result.conflict < 0.5)
     }
 }
