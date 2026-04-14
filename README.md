@@ -80,7 +80,7 @@ Download the latest APK from [Releases](https://github.com/AShan0227/phone-agent
 ### 2. Setup Wizard (3 steps, ~5 minutes)
 The app guides you through everything:
 - **Step 1:** Enable Accessibility Service (one-tap jump to Settings)
-- **Step 2:** Download Gemma 1B model (529MB, automatic, one-time)
+- **Step 2:** Download Gemma 3n E2B model (~1.3GB, automatic, one-time)
 - **Step 3:** Try a demo task ("Open Settings")
 
 ### 3. Use it
@@ -124,7 +124,7 @@ Type any task in natural language. Nemo handles the rest.
 
 | Component | Technology |
 |-----------|-----------|
-| On-device LLM | Gemma 3 1B via MediaPipe |
+| On-device LLM | Gemma 3n E2B via MediaPipe (5B params, 2GB RAM) |
 | Screen understanding | AccessibilityService (zero latency) |
 | OCR | ML Kit (offline Chinese/English) |
 | Knowledge graph | Room + SQLite (A* + ACO) |
@@ -141,7 +141,8 @@ Type any task in natural language. Nemo handles the rest.
 | Research mechanisms | 15 (all ported to Android) |
 | APK size | ~134MB (model downloaded separately) |
 | Min Android | 9.0 (API 28) |
-| Inference speed | ~100ms/step on-device |
+| Model | Gemma 3n E2B (5B params, only 2GB RAM, multimodal) |
+| Inference speed | ~100ms/step on-device (1.5x faster than Gemma 1B) |
 
 ## Research
 

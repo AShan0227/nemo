@@ -133,7 +133,7 @@ private fun StepModelDownload(onNext: () -> Unit) {
     LaunchedEffect(Unit) {
         if (isDone) return@LaunchedEffect
         val result = modelManager.downloadModel(
-            url = "https://huggingface.co/google/gemma-1b-it/resolve/main/gemma-1b-it-q4_0.bin",
+            url = "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-q4.bin",
             targetPath = defaultPath,
             onProgress = { progress = it },
         )
@@ -176,7 +176,7 @@ private fun StepModelDownload(onNext: () -> Unit) {
                     error = null
                     scope.launch {
                         val result = modelManager.downloadModel(
-                            url = "https://huggingface.co/google/gemma-1b-it/resolve/main/gemma-1b-it-q4_0.bin",
+                            url = "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-q4.bin",
                             targetPath = defaultPath,
                             onProgress = { progress = it },
                         )

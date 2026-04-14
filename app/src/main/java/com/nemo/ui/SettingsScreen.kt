@@ -89,7 +89,7 @@ fun SettingsScreen(
 
     var downloadUrl by remember {
         mutableStateOf(
-            "https://huggingface.co/google/gemma-1b-it/resolve/main/gemma-1b-it-q4_0.bin",
+            "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-q4.bin",
         )
     }
     var expectedSha256 by remember { mutableStateOf("") }

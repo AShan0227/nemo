@@ -21,12 +21,12 @@ import kotlin.math.max
  * On-device LLM inference via MediaPipe + Gemma.
  */
 data class LLMRuntimeConfig(
-    val maxOutputTokens: Int = 192,
+    val maxOutputTokens: Int = 256,   // Gemma 3n supports longer outputs
     val topK: Int = 40,
     val topP: Float = 0.9f,
-    val temperature: Float = 0.2f,
+    val temperature: Float = 0.15f,   // lower = more structured JSON output
     val randomSeed: Int = 7,
-    val promptTokenLimit: Int = 1024,
+    val promptTokenLimit: Int = 4096,  // Gemma 3n supports 32K, use 4K for agent
 )
 
 data class PromptCompressionStats(

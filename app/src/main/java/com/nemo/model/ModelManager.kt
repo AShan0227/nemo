@@ -146,6 +146,6 @@ class ModelManager(private val context: Context) {
     }
 
     companion object {
-        private const val DEFAULT_MODEL_FILE_NAME = "gemma-1b-it-q4.bin"
+        private const val DEFAULT_MODEL_FILE_NAME = "gemma-3n-E2B-it-q4.bin"
     }
 }
