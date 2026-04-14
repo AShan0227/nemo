@@ -6,7 +6,7 @@
     端侧 Gemma 模型 · 零云端 · 零 API 费用 · 数据永远不离开你的设备。
   </p>
   <p align="center">
-    <a href="https://github.com/AShan0227/phone-agent/releases">📱 下载 APK</a> ·
+    <a href="https://github.com/AShan0227/nemo/releases">📱 下载 APK</a> ·
     <a href="#nerve">🧬 什么是 NERVE？</a> ·
     <a href="#quickstart">⚡ 快速开始</a>
   </p>
@@ -60,7 +60,7 @@
 ## ⚡ 快速开始
 
 ### 1. 下载安装
-从 [Releases](https://github.com/AShan0227/phone-agent/releases) 下载最新 APK，安装到手机。
+从 [Releases](https://github.com/AShan0227/nemo/releases) 下载最新 APK，安装到手机。
 
 ### 2. Setup Wizard（3 步，~5 分钟）
 App 会自动引导你完成：

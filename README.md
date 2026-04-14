@@ -6,7 +6,7 @@
     On-device Gemma model. Zero cloud. Zero API fees. Your data never leaves your device.
   </p>
   <p align="center">
-    <a href="https://github.com/AShan0227/phone-agent/releases">📱 Download APK</a> ·
+    <a href="https://github.com/AShan0227/nemo/releases">📱 Download APK</a> ·
     <a href="#nerve">🧬 What is NERVE?</a> ·
     <a href="#quickstart">⚡ Quick Start</a> ·
     <a href="#demo">🎬 Demo</a>
@@ -75,7 +75,7 @@ No Accessibility setup. No model download. Just install and tap.
 ## ⚡ Quick Start (Full Mode)
 
 ### 1. Install
-Download the latest APK from [Releases](https://github.com/AShan0227/phone-agent/releases) and install.
+Download the latest APK from [Releases](https://github.com/AShan0227/nemo/releases) and install.
 
 ### 2. Setup Wizard (3 steps, ~5 minutes)
 The app guides you through everything:
@@ -170,7 +170,7 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
 # Development setup
-git clone https://github.com/AShan0227/phone-agent.git
+git clone https://github.com/AShan0227/nemo.git
 cd phone-agent
 ./gradlew assembleDebug   # Build Android app
 pytest tests/              # Run Python research tests
