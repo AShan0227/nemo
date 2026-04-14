@@ -1,5 +1,6 @@
 package com.nemo.agent
 
+import com.nemo.knowledge.GraphPersistence
 import com.nemo.knowledge.ScreenGraph
 import com.nemo.model.EntropyRouter
 import com.nemo.model.OnDeviceLLM
@@ -71,7 +72,8 @@ class PhoneAgent(
     private val safety = if (safetyEnabled) SafetyLayer() else null
     private val planner = TaskPlanner()
     private val actionBuilder = ActionBuilder()
-    private val graph = ScreenGraph()
+    private var graph = ScreenGraph()
+    private var graphPersistence: GraphPersistence? = null
 
     // Research mechanisms
     private val homeostasis = if (homeostasisEnabled) HomeostasisRegulator() else null
@@ -86,6 +88,16 @@ class PhoneAgent(
 
     private val service: NemoAccessibilityService?
         get() = NemoAccessibilityService.instance
+
+    /**
+     * Initialize Room-based graph persistence. Call once with Android Context.
+     * Loads previously learned navigation paths from SQLite.
+     */
+    suspend fun initPersistence(context: android.content.Context) {
+        val persistence = GraphPersistence(context)
+        graphPersistence = persistence
+        graph = persistence.loadGraph()
+    }
 
     suspend fun execute(task: String, onStep: ((StepRecord) -> Unit)? = null): TaskResult {
         stepCount = 0
@@ -295,6 +307,12 @@ class PhoneAgent(
                 graphNodes = graph.nodeCount,
                 graphEdges = graph.edgeCount,
             ))
+        }
+        // Persist learned graph to SQLite
+        graphPersistence?.let { persistence ->
+            kotlinx.coroutines.runBlocking {
+                try { persistence.saveGraph(graph) } catch (_: Exception) {}
+            }
         }
     }
 
