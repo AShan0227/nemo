@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import json
-from unittest.mock import AsyncMock, patch, PropertyMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from src.agent.agent import PhoneAgent, TaskStatus
 from src.config.settings import AgentConfig
-
 from tests.conftest import (
-    SETTINGS_XML, WIFI_XML, WECHAT_CHAT_XML, PURCHASE_XML,
+    PURCHASE_XML,
+    SETTINGS_XML,
+    WECHAT_CHAT_XML,
+    WIFI_XML,
     make_llm_response,
 )
 
@@ -46,11 +47,17 @@ def _mock_adb(agent: PhoneAgent, xml_sequence: list[str]) -> None:
     agent.adb.get_screen_size = AsyncMock(return_value=(1080, 1920))
 
 
-def _mock_llm(agent: PhoneAgent, responses: list[str]) -> None:
+def _mock_llm(
+    agent: PhoneAgent,
+    responses: list[str],
+    captured_kwargs: list[dict[str, object]] | None = None,
+) -> None:
     """Replace LLM client with mocks returning scripted responses."""
     idx = {"i": 0}
 
     async def mock_decide(*args, **kwargs):
+        if captured_kwargs is not None:
+            captured_kwargs.append(kwargs)
         resp = responses[min(idx["i"], len(responses) - 1)]
         idx["i"] += 1
         return resp
@@ -177,3 +184,27 @@ async def test_graph_records_transitions():
     # Step 2 has prev_screen_hash set, so transition should be recorded
     total_edges = sum(len(edges) for edges in agent.graph._edges.values())
     assert total_edges >= 1
+
+
+@pytest.mark.asyncio
+async def test_llm_receives_recent_history_context():
+    agent = _make_agent(safety=False)
+    agent.config.context_window_steps = 2
+    _mock_adb(agent, [SETTINGS_XML, SETTINGS_XML, WIFI_XML, WIFI_XML, WIFI_XML])
+    calls: list[dict[str, object]] = []
+    _mock_llm(
+        agent,
+        [
+            make_llm_response("tap", {"index": 0}, "Tap network"),
+            make_llm_response("done", {"summary": "ok"}, "Done"),
+        ],
+        captured_kwargs=calls,
+    )
+
+    result = await agent.execute("open network")
+    assert result.status == TaskStatus.COMPLETED
+    assert len(calls) >= 2
+    assert calls[0]["history"] == []
+    second_history = calls[1]["history"]
+    assert isinstance(second_history, list)
+    assert second_history[-1]["action"] == "tap"
