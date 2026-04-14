@@ -116,17 +116,19 @@ private fun clamp(value: Double, low: Double, high: Double) = max(low, min(high,
  * Generate candidates from UI hierarchy elements.
  */
 fun candidatesFromUi(
-    elements: List<ScreenReader.UIElement>,
+    elements: List<UIElement>,
     interactiveOnly: Boolean = true
 ): List<SignalCandidate> {
     return elements.mapNotNull { elem ->
         if (interactiveOnly && !(elem.clickable || elem.scrollable || elem.editable)) return@mapNotNull null
 
-        val (label, baseConf) = when {
-            elem.text.isNotEmpty() -> elem.text to 0.88
-            elem.contentDesc.isNotEmpty() -> elem.contentDesc to 0.82
-            elem.resourceId.isNotEmpty() -> elem.resourceId.substringAfterLast("/") to 0.72
-            elem.className.isNotEmpty() -> elem.className.substringAfterLast(".") to 0.45
+        val label: String
+        val baseConf: Double
+        when {
+            elem.text.isNotEmpty() -> { label = elem.text; baseConf = 0.88 }
+            elem.contentDesc.isNotEmpty() -> { label = elem.contentDesc; baseConf = 0.82 }
+            elem.resourceId.isNotEmpty() -> { label = elem.resourceId.substringAfterLast("/"); baseConf = 0.72 }
+            elem.className.isNotEmpty() -> { label = elem.className.substringAfterLast("."); baseConf = 0.45 }
             else -> return@mapNotNull null
         }
 
@@ -134,11 +136,12 @@ fun candidatesFromUi(
         val penalty = if (elem.scrollable) 0.08 else 0.0
         val confidence = clamp(baseConf + boost - penalty, 0.15, 0.99)
 
+        val b = elem.bounds
         SignalCandidate(
             label = label,
             confidence = confidence,
             source = "ui",
-            bounds = elem.bounds
+            bounds = intArrayOf(b.left, b.top, b.right, b.bottom)
         )
     }
 }
