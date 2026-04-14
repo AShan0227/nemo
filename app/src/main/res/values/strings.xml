@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Nemo Agent</string>
-    <string name="accessibility_description">Nemo reads screen content and performs actions to complete your tasks. On-device AI, private and offline.</string>
+    <string name="accessibility_description">Nemo reads screen content and performs tap/swipe actions to complete your tasks.\n\nPrivacy: All AI processing runs on-device. Screen content is never sent to any server. Sensitive fields (passwords, payment info) are automatically filtered.\n\nSafety: Financial transactions, permission grants, and destructive actions are automatically blocked.</string>
 </resources>

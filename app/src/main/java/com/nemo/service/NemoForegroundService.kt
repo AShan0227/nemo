@@ -32,13 +32,14 @@ class NemoForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val task = intent?.getStringExtra(EXTRA_TASK)
-        if (task.isNullOrBlank()) {
+        val rawTask = intent?.getStringExtra(EXTRA_TASK)
+        if (rawTask.isNullOrBlank()) {
             stopSelf()
             return START_NOT_STICKY
         }
+        val task = rawTask.take(MAX_TASK_LENGTH).trim()
 
-        startForeground(NOTIFICATION_ID, buildNotification("Starting...", 0))
+        startForeground(NOTIFICATION_ID, buildNotification("Task running...", 0))
         executeTask(task)
 
         return START_STICKY
@@ -66,7 +67,7 @@ class NemoForegroundService : Service() {
 
                 val result = agent.execute(task) { step ->
                     updateNotification(
-                        "Step ${step.step}: ${step.action}",
+                        "Step ${step.step} of ${settings.maxSteps} running...",
                         step.step,
                     )
                 }
@@ -155,6 +156,7 @@ class NemoForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "nemo_agent_runtime"
         private const val NOTIFICATION_ID = 1001
+        private const val MAX_TASK_LENGTH = 500
         const val EXTRA_TASK = "task"
 
         fun start(context: Context, task: String) {

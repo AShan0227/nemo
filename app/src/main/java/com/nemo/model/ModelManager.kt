@@ -38,7 +38,13 @@ class ModelManager(private val context: Context) {
         onProgress: (DownloadProgress) -> Unit = {},
     ): Result<File> = withContext(Dispatchers.IO) {
         runCatching {
+            require(url.startsWith("https://")) { "Only HTTPS URLs allowed for model download" }
+
             val targetFile = File(targetPath)
+            val allowedDir = context.filesDir.canonicalPath
+            require(targetFile.canonicalPath.startsWith(allowedDir)) {
+                "Model path must be within app private storage"
+            }
             targetFile.parentFile?.mkdirs()
 
             if (targetFile.exists() && targetFile.length() > 0) {
