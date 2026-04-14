@@ -2,11 +2,16 @@
 
 from pathlib import Path
 
-from src.agent.agent import PhoneAgent
+from src.agent.agent import PhoneAgent, StepRecord
 from src.config.settings import AgentConfig
 from src.device.actions import ActionType
 from src.knowledge.graph import ScreenGraph
-from src.llm.router import EntropyRouter, ReasoningDepth
+from src.llm.router import (
+    EntropyRouter,
+    ReasoningDepth,
+    RoutingBenchmarkCase,
+    compare_routing_accuracy,
+)
 from src.screen.parser import parse_ui_hierarchy
 from tests.conftest import SETTINGS_XML, WECHAT_CHAT_XML
 
@@ -126,12 +131,41 @@ def test_router_system2_unknown():
     assert decision.depth == ReasoningDepth.SYSTEM_2
 
 
-def test_route_decision_graph_proxy():
-    """Agent routing uses graph visit counts as entropy proxy."""
+def test_route_decision_prefers_observed_entropy():
+    """Agent routing should use observed real entropy when available."""
     agent = _make_agent()
-    # Unknown screen -> high entropy (System 1.5 or System 2)
+    # Cold start: no entropy observed yet.
     decision = agent._route_decision("unknown_hash")
-    assert decision.depth != ReasoningDepth.SYSTEM_1  # should not be cached
+    assert decision.depth == ReasoningDepth.SYSTEM_2
+
+    # After observing low entropy, this screen should route lighter.
+    agent.router.observe_entropy("unknown_hash", 0.2)
+    decision2 = agent._route_decision("unknown_hash")
+    assert decision2.depth == ReasoningDepth.SYSTEM_1_5
+    assert decision2.source in ("observed_entropy", "real_entropy")
+
+
+def test_compare_routing_accuracy_real_entropy():
+    cases = [
+        RoutingBenchmarkCase(
+            screen_hash="s1",
+            expected_depth=ReasoningDepth.SYSTEM_2,
+            action_probs=[0.7, 0.3],
+            real_entropy=0.9,
+            cached=False,
+        ),
+        RoutingBenchmarkCase(
+            screen_hash="s2",
+            expected_depth=ReasoningDepth.SYSTEM_1,
+            action_probs=[0.95, 0.05],
+            real_entropy=0.1,
+            cached=True,
+        ),
+    ]
+    report = compare_routing_accuracy(cases, threshold_low=0.3, threshold_high=0.7)
+    assert report.sample_size == 2
+    assert 0.0 <= report.heuristic_accuracy <= 1.0
+    assert 0.0 <= report.real_entropy_accuracy <= 1.0
 
 
 # --- Knowledge graph wiring tests ---
@@ -163,3 +197,16 @@ def test_agent_graph_persistence_helpers(tmp_path: Path):
     agent2 = PhoneAgent(AgentConfig(graph_persist_path=str(path), fusion_enabled=False))
     agent2._load_graph_from_disk()
     assert len(agent2.graph.get_neighbors("a")) == 1
+
+
+def test_agent_recent_context_window():
+    agent = PhoneAgent(AgentConfig(context_window_steps=2, fusion_enabled=False))
+    history = [
+        StepRecord(1, "s1", "r1", "tap", {"index": 0}, True),
+        StepRecord(2, "s2", "r2", "scroll", {"direction": "down"}, False, error="stuck"),
+        StepRecord(3, "s3", "r3", "wait", {"ms": 1000}, True),
+    ]
+    payload = agent._build_recent_context(history)
+    assert len(payload) == 2
+    assert payload[0]["step"] == 2
+    assert payload[1]["action"] == "wait"

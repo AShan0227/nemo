@@ -51,6 +51,9 @@ class LLMConfig(BaseModel):
     retry_backoff_s: float = 1.0
     enable_stream: bool = False
     tool_use_enabled: bool = True
+    logprobs_enabled: bool = True
+    top_logprobs: int = 5
+    prompt_version: str = "reflect_fewshot_v1"
 
     @field_validator("api_key", mode="before")
     @classmethod
@@ -89,6 +92,7 @@ class AgentConfig(BaseModel):
     router_enabled: bool = True
     planner_enabled: bool = True
     planner_confidence_threshold: float = 0.7
+    context_window_steps: int = 4
     ocr_enabled: bool = False
     ocr_min_confidence: float = 0.45
     visual_enabled: bool = False
