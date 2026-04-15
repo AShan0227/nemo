@@ -54,7 +54,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
-    // MediaPipe LLM Inference (Gemma on-device)
+    // MediaPipe LLM Inference (on-device, .task format)
     implementation("com.google.mediapipe:tasks-genai:0.10.24")
 
     // ML Kit OCR (offline text recognition)

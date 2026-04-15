@@ -93,11 +93,11 @@ private fun StepModelDownload(onNext: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    // Auto-start download from our own GitHub Release (no auth needed)
+    // Auto-start multi-part download from GitHub Release (no auth needed)
     LaunchedEffect(Unit) {
         if (isDone) return@LaunchedEffect
-        val result = modelManager.downloadModel(
-            url = ModelManager.DEFAULT_MODEL_URL,
+        val result = modelManager.downloadMultiPartModel(
+            partUrls = ModelManager.MODEL_PART_URLS,
             targetPath = defaultPath,
             onProgress = { progress = it },
         )
@@ -126,7 +126,7 @@ private fun StepModelDownload(onNext: () -> Unit) {
             progress?.let { p ->
                 LinearProgressIndicator(progress = { p.percent / 100f }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
-                Text("${p.percent}% — ${p.downloadedBytes / 1_000_000}MB / ${p.totalBytes / 1_000_000}MB")
+                Text("${p.percent}% — ${p.downloadedBytes / 1_000_000}MB ${p.status}")
             }
 
             // Error + retry
@@ -137,8 +137,8 @@ private fun StepModelDownload(onNext: () -> Unit) {
                 Button(onClick = {
                     error = null; progress = null
                     scope.launch {
-                        val result = modelManager.downloadModel(
-                            url = ModelManager.DEFAULT_MODEL_URL,
+                        val result = modelManager.downloadMultiPartModel(
+                            partUrls = ModelManager.MODEL_PART_URLS,
                             targetPath = defaultPath,
                             onProgress = { progress = it },
                         )

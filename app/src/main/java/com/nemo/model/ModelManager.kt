@@ -150,8 +150,87 @@ class ModelManager(private val context: Context) {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    /**
+     * Download a multi-part model and merge into one file.
+     * For models > 2GB that exceed GitHub Release single-file limit.
+     */
+    suspend fun downloadMultiPartModel(
+        partUrls: List<String>,
+        targetPath: String,
+        authToken: String? = null,
+        onProgress: (DownloadProgress) -> Unit = {},
+    ): Result<File> = withContext(Dispatchers.IO) {
+        runCatching {
+            val targetFile = File(targetPath)
+            val allowedDir = context.filesDir.canonicalPath
+            require(targetFile.canonicalPath.startsWith(allowedDir)) {
+                "Model path must be within app private storage"
+            }
+
+            if (targetFile.exists() && targetFile.length() > 0) {
+                onProgress(DownloadProgress(targetFile.length(), targetFile.length(), 100, "complete"))
+                return@runCatching targetFile
+            }
+
+            targetFile.parentFile?.mkdirs()
+            val totalParts = partUrls.size
+            var totalDownloaded = 0L
+
+            FileOutputStream(targetFile).use { output ->
+                for ((index, url) in partUrls.withIndex()) {
+                    require(url.startsWith("https://")) { "Only HTTPS URLs allowed" }
+
+                    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = 30_000
+                        readTimeout = 30_000
+                        doInput = true
+                        instanceFollowRedirects = true
+                        if (!authToken.isNullOrBlank()) {
+                            setRequestProperty("Authorization", "Bearer $authToken")
+                        }
+                    }
+                    connection.connect()
+                    if (connection.responseCode !in 200..299) {
+                        throw IllegalStateException("HTTP ${connection.responseCode} on part ${index + 1}")
+                    }
+
+                    val partSize = connection.contentLengthLong.coerceAtLeast(0L)
+                    var partDownloaded = 0L
+                    val buffer = ByteArray(8192)
+
+                    connection.inputStream.use { input ->
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            partDownloaded += read
+                            totalDownloaded += read
+                            onProgress(DownloadProgress(
+                                downloadedBytes = totalDownloaded,
+                                totalBytes = 0, // unknown total for multi-part
+                                percent = ((index * 100 + (partDownloaded * 100 / partSize.coerceAtLeast(1))) / totalParts).toInt().coerceIn(0, 99),
+                                status = "part ${index + 1}/$totalParts",
+                            ))
+                        }
+                    }
+                    connection.disconnect()
+                }
+            }
+
+            onProgress(DownloadProgress(totalDownloaded, totalDownloaded, 100, "complete"))
+            targetFile
+        }
+    }
+
     companion object {
-        private const val DEFAULT_MODEL_FILE_NAME = "gemma-3-1b-it-Q4_0.gguf"
-        const val DEFAULT_MODEL_URL = "https://github.com/AShan0227/nemo/releases/download/model-v1/gemma-3-1b-it-Q4_0.gguf"
+        private const val DEFAULT_MODEL_FILE_NAME = "gemma-4-E2B-it.litertlm"
+        const val DEFAULT_MODEL_URL = "https://github.com/AShan0227/nemo/releases/download/model-v1/gemma-4-E2B-it.litertlm"
+
+        val MODEL_PART_URLS = listOf(
+            "https://github.com/AShan0227/nemo/releases/download/model-v1/gemma4-part-aa",
+            "https://github.com/AShan0227/nemo/releases/download/model-v1/gemma4-part-ab",
+            "https://github.com/AShan0227/nemo/releases/download/model-v1/gemma4-part-ac",
+        )
     }
 }
