@@ -243,7 +243,7 @@ fun SettingsScreen(
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("LLM Tuning", style = MaterialTheme.typography.titleMedium)
-                        Text("MediaPipe tasks-genai ${OnDeviceLLM.MEDIAPIPE_GENAI_VERSION}")
+                        Text("LiteRT-LM (Gemma 4 E2B)")
 
                         Text("Max output tokens: ${settings.llmMaxOutputTokens}")
                         Slider(

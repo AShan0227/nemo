@@ -30,8 +30,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
 
     buildFeatures {
@@ -54,17 +56,17 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
-    // MediaPipe LLM Inference (on-device, .task format)
-    implementation("com.google.mediapipe:tasks-genai:0.10.24")
+    // LiteRT-LM (on-device inference, supports .litertlm + .task)
+    implementation("com.google.ai.edge.litertlm:litertlm-android:+")
 
     // ML Kit OCR (offline text recognition)
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
 
     // Room (SQLite for knowledge graph)
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-runtime:2.7.1")
+    implementation("androidx.room:room-ktx:2.7.1")
+    ksp("androidx.room:room-compiler:2.7.1")
 
     // Security (encrypted storage)
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
